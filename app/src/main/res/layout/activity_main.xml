@@ -1,34 +1,25 @@
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/main"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mainLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".MainActivity">
+    android:orientation="vertical"
+    android:padding="16dp">
 
-    <ScrollView
-        android:id="@+id/scrollView"
+    <!-- BPM 슬라이더 -->
+    <SeekBar
+        android:id="@+id/seekBarBPM"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:fillViewport="true"
-        android:scrollbars="vertical">
+        android:layout_height="wrap_content"
+        android:max="300"
+        android:progress="120"/>
 
-        <TextView
-            android:id="@+id/txtLog"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#EFEFEF"
-            android:gravity="start"
-            android:inputType="none"
-            android:focusable="false"
-            android:focusableInTouchMode="false"
-            android:clickable="false"
-            android:longClickable="false"
-            android:padding="16dp"
-            android:scrollHorizontally="false"
-            android:textColor="#000000"
-            android:textSize="16sp"
-            tools:ignore="Autofill,LabelFor,SpeakableTextPresentCheck,VisualLintTextFieldSize" />
-    </ScrollView>
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <!-- BPM 표시 -->
+    <TextView
+        android:id="@+id/txtBPM"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="BPM: 120"
+        android:textSize="18sp"
+        android:paddingTop="8dp"/>
+
+</LinearLayout>

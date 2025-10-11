@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.robsonmartins.androidmidisynth"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.robsonmartins.androidmidisynth"
-        minSdk = 33
-        targetSdk = 34
+        minSdk = 31
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -32,7 +32,7 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
-    ndkVersion = "27.0.11902837 rc2"
+    ndkVersion = "29.0.14206865"
     externalNativeBuild {
         cmake {
             path("src/main/cpp/CMakeLists.txt")
@@ -48,4 +48,5 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
 }

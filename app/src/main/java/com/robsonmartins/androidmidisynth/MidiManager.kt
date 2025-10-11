@@ -41,20 +41,24 @@ import android.media.midi.MidiManager
  * @param context The context object.
  * @param onMidiMessageReceived Method callback to receive MIDI messages.
  */
-class MidiManager(context: Context,
-                  private val onMidiMessageReceived: (String) -> Unit) {
+class MidiManager(
+    context: Context,
+    private val onMidiMessageReceived: (String) -> Unit
+) {
 
     /* @brief Android.MIDI.MidiManager instance. */
     private val midiManager = context.getSystemService(Context.MIDI_SERVICE) as MidiManager
 
     /** @brief Finalize the instance. */
-    fun finalize()  { stopReadingMidi() }
+    fun finalize() {
+        stopReadingMidi()
+    }
 
     /** @brief Start the MIDI listener. */
     fun start() {
         // scan MIDI devices
-        val deviceInfos = midiManager.devices
-        for (deviceInfo in deviceInfos)  { openMidiDevice(deviceInfo) }
+        midiManager.devices.forEach { deviceInfo -> openMidiDevice(deviceInfo) }
+
         // register addDevice and removeDevice listeners
         midiManager.registerDeviceCallback(
             object : MidiManager.DeviceCallback() {
@@ -62,16 +66,18 @@ class MidiManager(context: Context,
                     // open MIDI device
                     openMidiDevice(device)
                 }
+
                 override fun onDeviceRemoved(device: MidiDeviceInfo) {
                     onMidiMessageReceived(
                         "Disconnect: ${device.properties.getString("product")}"
                     )
                 }
-        }, null)
+            }, null
+        )
     }
 
     @Suppress("unused")
-    /** @brief Stop the MIDI listener. */
+            /** @brief Stop the MIDI listener. */
     fun stop() {
         stopReadingMidi()
     }
@@ -80,9 +86,17 @@ class MidiManager(context: Context,
      * @brief Open the MIDI device.
      * @param deviceInfo MIDI device info.
      */
-    private fun openMidiDevice(deviceInfo: MidiDeviceInfo) {
+    public fun openMidiDevice(deviceInfo: MidiDeviceInfo) {
         // ignore FluidSynth MIDI device
         if (deviceInfo.properties.getString("product")?.lowercase() == "fluidsynth") return
+
+        // 출력 포트가 존재하는지 확인
+        val outputPort = deviceInfo.ports.firstOrNull { it.type == MidiDeviceInfo.PortInfo.TYPE_OUTPUT }
+        if (outputPort == null) {
+            onMidiMessageReceived("No valid output port for device ${deviceInfo.properties.getString("product")}")
+            return
+        }
+
         // open MIDI device
         midiManager.openDevice(deviceInfo, {
             onMidiMessageReceived(
@@ -111,6 +125,7 @@ class MidiManager(context: Context,
      * @param   portNumber     The index of the "output" port to open.
      */
     private external fun startReadingMidi(receiveDevice: MidiDevice, portNumber: Int)
+
     /*
      * @brief  Import of the native implementation of the MidiManager.stopReadingMidi() method.
      * @details Stops MIDI device for reading.
