@@ -2,35 +2,53 @@ package com.robsonmartins.androidmidisynth.util
 
 import com.robsonmartins.androidmidisynth.SynthManager
 import com.robsonmartins.androidmidisynth.dto.MidiEvent
-import kotlinx.coroutines.*
+import kotlin.concurrent.thread
 
-class MidiTrackPlayer(
-    private val events: List<MidiEvent>,
-    private val synth: SynthManager,
-    private var bpm: Double
-) {
-    private var job: Job? = null
+class MidiTrackPlayer(private val synth: SynthManager, private val events: List<MidiEvent>) {
+
+    private var isPlaying = false
+    private var playThread: Thread? = null
+    private var mute = false
+    private var bpm = 120.0
 
     fun start() {
-        job = CoroutineScope(Dispatchers.Default).launch {
-            val startTime = System.currentTimeMillis()
+        if (isPlaying) return
+        isPlaying = true
+        playThread = thread {
+            var lastTick = 0L
             for (event in events) {
-                val msPerTick = 60000.0 / (bpm * 480) // 480 ticks per quarter note
-                val eventTime = startTime + (event.tick * msPerTick).toLong()
-                val delayTime = eventTime - System.currentTimeMillis()
-                if (delayTime > 0) delay(delayTime)
+                if (!isPlaying) break
 
-                if (event.isNoteOn) synth.noteOn(event.note, event.velocity)
-                else synth.noteOff(event.note)
+                val tickDiff = event.tick - lastTick
+                lastTick = event.tick
+
+                // MIDI tick → 실제 시간 변환
+                val ms = (tickDiff * 500.0 / bpm).toLong()
+                Thread.sleep(ms)
+
+                if (!mute) {
+                    if (event.isNoteOn) synth.noteOn(event.note, event.velocity)
+                    else synth.noteOff(event.note)
+                }
             }
+            isPlaying = false
         }
     }
 
+    fun isMuted() = mute
+
     fun stop() {
-        job?.cancel()
+        isPlaying = false
+        playThread?.join()
     }
 
-    fun setBPM(newBpm: Double) {
-        bpm = newBpm
+    fun setMute(on: Boolean) {
+        mute = on
     }
+
+    fun setBPM(newBPM: Double) {
+        bpm = newBPM
+    }
+
+    fun getIsPlaying(): Boolean = isPlaying
 }

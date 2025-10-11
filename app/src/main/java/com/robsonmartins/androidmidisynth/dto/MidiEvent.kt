@@ -4,5 +4,6 @@ data class MidiEvent(
     val tick: Long,
     val note: Int,
     val velocity: Int,
-    val isNoteOn: Boolean
+    val isNoteOn: Boolean,
+    var trackIndex: Int
 )

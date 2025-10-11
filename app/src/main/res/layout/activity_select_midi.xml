@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/selectMidiLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- 제목 -->
+    <TextView
+        android:id="@+id/txtSelectAlbumTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="학습 앨범 선택"
+        android:textSize="20sp"
+        android:paddingBottom="16dp" />
+
+    <!-- 앨범 리스트 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerViewAlbums"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scrollbars="vertical" />
+
+</LinearLayout>

@@ -1,24 +1,17 @@
 package com.robsonmartins.androidmidisynth
 
-import android.os.Build
 import android.os.Bundle
-import android.widget.ScrollView
-import android.widget.TextView
-import android.Manifest
-import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import android.media.midi.MidiDeviceInfo
-import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.SeekBar
-import androidx.activity.enableEdgeToEdge
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import com.leff.midi.MidiFile
+import com.leff.midi.event.NoteOff
+import com.leff.midi.event.NoteOn
+import com.robsonmartins.androidmidisynth.dto.MidiEvent
 import com.robsonmartins.androidmidisynth.util.MidiMultiPlayer
-
-class MainViewModel : androidx.lifecycle.ViewModel() {
-    var textContent: String = ""
-}
+import java.io.InputStream
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,69 +21,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val viewModel: MainViewModel by viewModels()
-
-    // MIDI 외부 장치용 (나중에 블루투스 연결 시 사용)
-    private lateinit var midiManager: MidiManager
-
-    private lateinit var txtLog: TextView
-    private lateinit var scrollView: ScrollView
-
-    private var useInternalSynth: Boolean = false
-
     private lateinit var synth: SynthManager
     private lateinit var multiPlayer: MidiMultiPlayer
 
+    private lateinit var txtAlbumName: TextView
+    private lateinit var buttonContainer: LinearLayout
+    private lateinit var btnPlayAll: Button
+    private lateinit var btnStopAll: Button
     private lateinit var txtBPM: TextView
     private lateinit var seekBarBPM: SeekBar
 
+    private var initialBPM = 120
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        /* 권한 요청 */
-        requestPermissions()
-
-        /* UI 초기화 */
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.mainLayout)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
-
+        // View 초기화
+        txtAlbumName = findViewById(R.id.txtAlbumName)
+        buttonContainer = findViewById(R.id.buttonContainer)
+        btnPlayAll = findViewById(R.id.btnPlayAll)
+        btnStopAll = findViewById(R.id.btnStopAll)
         txtBPM = findViewById(R.id.txtBPM)
         seekBarBPM = findViewById(R.id.seekBarBPM)
 
-        /* SynthManager 초기화 */
+        txtBPM.text = "BPM: $initialBPM"
+        seekBarBPM.progress = initialBPM
+
+        // Synth 초기화
         synth = SynthManager(this)
         synth.loadSoundFont("KawaiStereoGrand.sf3")
-
-        /* MidiMultiPlayer 초기화 */
         multiPlayer = MidiMultiPlayer(synth)
 
-        /* 초기 BPM 설정 */
-        val initialBPM = 120
-        seekBarBPM.progress = initialBPM
-        txtBPM.text = "BPM: $initialBPM"
+        // Intent로 전달받은 MIDI 파일 로드
+        val midiFiles = intent.getStringArrayListExtra("MID_FILES") ?: arrayListOf()
+        val albumName = intent.getStringExtra("ALBUM_NAME") ?: "앨범"
+        txtAlbumName.text = "앨범: $albumName"
 
-        /* MID 파일 로드 */
-        assets.open("05_ Concerto in a minor, 3rd Movement, Op. 3, No.6.mid")
-            .use { multiPlayer.loadMidi(it, initialBPM.toDouble()) }
-        assets.open("09_Gavotte from _mignon_.mid")
-            .use { multiPlayer.loadMidi(it, initialBPM.toDouble()) }
+        // MIDI 파일 트랙별로 파싱 후 multiPlayer에 추가
+        for ((index, path) in midiFiles.withIndex()) {
+            assets.open(path).use { inputStream ->
+                val trackEvents = parseMidiFile(inputStream) // track 단위 이벤트 리스트
+                trackEvents.forEach { events ->
+                    multiPlayer.addTrack(events, index)
+                }
+            }
+        }
 
-        /* MID 재생 시작 */
-        multiPlayer.startAll()
+        // 트랙별 ON/OFF 버튼 생성
+        midiFiles.forEachIndexed { index, _ ->
+            val btn = Button(this).apply {
+                text = "ON ${index + 1}"
+                setOnClickListener {
+                    val currentlyMuted = multiPlayer.getMuteTracks()[index] ?: false
+                    multiPlayer.setMute(index, !currentlyMuted)
+                    text = if (!currentlyMuted) "OFF ${index + 1}" else "ON ${index + 1}"
+                }
+            }
+            buttonContainer.addView(btn)
+        }
 
-        /* BPM SeekBar 이벤트 */
+        // PLAY ALL
+        btnPlayAll.setOnClickListener { multiPlayer.startAll() }
+
+        // STOP ALL
+        btnStopAll.setOnClickListener { multiPlayer.stopAll() }
+
+        // BPM 변경
         seekBarBPM.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val bpm = progress.coerceAtLeast(30) // 최소 30 BPM
-                multiPlayer.setBPM(bpm.toDouble())
+                val bpm = progress.coerceAtLeast(30)
                 txtBPM.text = "BPM: $bpm"
+                multiPlayer.setBPM(bpm.toDouble())
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -99,67 +101,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        /* 안전 종료 */
         multiPlayer.stopAll()
         synth.release()
-        synth.finalize()
         super.onDestroy()
     }
 
-    private fun onMidiMessageReceived(message: String) {
-        runOnUiThread { txtLog.append("$message\n") }
+    /** MIDI InputStream → 트랙 단위 MidiEvent 리스트 반환 */
+    private fun parseMidiFile(inputStream: InputStream): List<List<MidiEvent>> {
+        val midiFile = MidiFile(inputStream)
+        val tracksEvents = mutableListOf<List<MidiEvent>>()
 
-        if (useInternalSynth) {
-            // TODO: MIDI Note/Velocity 파싱 후 SynthManager 호출
-            // synth.fluidsynthNoteOn(note, velocity)
-        }
-    }
-
-    /* 나중에 외부 MIDI 장치 연결 시 사용 */
-    private fun checkMidiDevicesAndStart() {
-        val devices = (getSystemService(MIDI_SERVICE) as android.media.midi.MidiManager).devices
-        if (devices.isEmpty()) {
-            onMidiMessageReceived("No external MIDI devices detected. Using internal Synth.")
-            useInternalSynth = true
-        } else {
-            devices.forEach { deviceInfo ->
-                openMidiDeviceOrUseSynth(deviceInfo)
+        for ((trackIndex, track) in midiFile.tracks.withIndex()) {
+            val events = mutableListOf<MidiEvent>()
+            for (event in track.events) {
+                when (event) {
+                    is NoteOn -> events.add(
+                        MidiEvent(event.tick.toLong(), event.noteValue, event.velocity, true, trackIndex)
+                    )
+                    is NoteOff -> events.add(
+                        MidiEvent(event.tick.toLong(), event.noteValue, event.velocity, false, trackIndex)
+                    )
+                }
             }
+            tracksEvents.add(events)
         }
+
+        return tracksEvents
     }
 
-    private fun openMidiDeviceOrUseSynth(deviceInfo: MidiDeviceInfo) {
-        val productName = deviceInfo.properties.getString("product") ?: "Unknown"
-        if (productName.lowercase() == "fluidsynth") return
-
-        val outputPort =
-            deviceInfo.ports.firstOrNull { it.type == MidiDeviceInfo.PortInfo.TYPE_OUTPUT }
-        if (outputPort == null) {
-            onMidiMessageReceived("No valid output port for device $productName. Using internal Synth.")
-            useInternalSynth = true
-            return
-        }
-
-        midiManager.openMidiDevice(deviceInfo)
-    }
-
-    private fun requestPermissions() {
-        val permissions = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.READ_MEDIA_AUDIO,
-                Manifest.permission.POST_NOTIFICATIONS
-            )
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-            else -> emptyArray()
-        }
-
-        if (permissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissions, 100)
-        }
-    }
 }

@@ -40,6 +40,7 @@ import java.io.IOException
  * @param context The context object.
  */
 class SynthManager(private val context: Context) {
+    val appContext: Context get() = context
 
     init {
         fluidsynthInit()
@@ -65,6 +66,11 @@ class SynthManager(private val context: Context) {
             throw RuntimeException(e)
         }
     }
+
+    fun playMidiFile(path: String) {
+        fluidsynthPlayMidiFile(path)
+    }
+
 
     /** Public wrapper to play a MIDI note */
     fun noteOn(note: Int, velocity: Int) {
@@ -190,5 +196,7 @@ class SynthManager(private val context: Context) {
      * @param   level The reverb level (0 to 127).
      */
     private external fun fluidsynthReverb(level: Int)
+
+    private external fun fluidsynthPlayMidiFile(path: String)
 
 }

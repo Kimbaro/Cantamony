@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/mainLayout"
     android:layout_width="match_parent"
@@ -5,13 +6,44 @@
     android:orientation="vertical"
     android:padding="16dp">
 
-    <!-- BPM 슬라이더 -->
-    <SeekBar
-        android:id="@+id/seekBarBPM"
+    <!-- 앨범 이름 -->
+    <TextView
+        android:id="@+id/txtAlbumName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="앨범: "
+        android:textSize="18sp"
+        android:paddingBottom="8dp" />
+
+    <!-- 동적 생성될 MID 파일 on/off 버튼 -->
+    <LinearLayout
+        android:id="@+id/buttonContainer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:max="300"
-        android:progress="120"/>
+        android:orientation="vertical"
+        android:paddingBottom="16dp" />
+
+    <!-- 전체 재생/정지 버튼 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingBottom="16dp">
+
+        <Button
+            android:id="@+id/btnPlayAll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Play All" />
+
+        <Button
+            android:id="@+id/btnStopAll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Stop All" />
+    </LinearLayout>
 
     <!-- BPM 표시 -->
     <TextView
@@ -19,7 +51,14 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="BPM: 120"
-        android:textSize="18sp"
-        android:paddingTop="8dp"/>
+        android:paddingBottom="8dp" />
+
+    <!-- BPM SeekBar -->
+    <SeekBar
+        android:id="@+id/seekBarBPM"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="300"
+        android:progress="120" />
 
 </LinearLayout>
