@@ -69,13 +69,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 트랙별 ON/OFF 버튼 생성
-        midiFiles.forEachIndexed { index, _ ->
+        midiFiles.forEachIndexed { index, path ->
             val btn = Button(this).apply {
-                text = "ON ${index + 1}"
+                text = "ON ${path}"
                 setOnClickListener {
                     val currentlyMuted = multiPlayer.getMuteTracks()[index] ?: false
                     multiPlayer.setMute(index, !currentlyMuted)
-                    text = if (!currentlyMuted) "OFF ${index + 1}" else "ON ${index + 1}"
+                    text = if (!currentlyMuted) "OFF ${path}" else "ON ${path}"
                 }
             }
             buttonContainer.addView(btn)
