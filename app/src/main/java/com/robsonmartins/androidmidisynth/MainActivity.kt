@@ -16,6 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.leff.midi.MidiFile
 import com.leff.midi.event.NoteOff
 import com.leff.midi.event.NoteOn
+import com.leff.midi.event.meta.KeySignature
 import com.leff.midi.event.meta.TimeSignature
 import com.robsonmartins.androidmidisynth.dto.MidiEvent
 import com.robsonmartins.androidmidisynth.util.MidiMultiPlayer
@@ -55,6 +56,9 @@ class MainActivity : AppCompatActivity() {
     // 악보 이미지 표시
     private lateinit var imgSheetMusic: ImageView
 
+    // 워터마크
+    private lateinit var watermarkView: WatermarkView
+
     private var initialBPM = 120
 
     // 마디 정보
@@ -62,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private var ticksPerMeasure = 0L
     private var midiResolution = 480
     private var timeSignature: TimeSignature? = null
+    private var keySignature: KeySignature? = null
 
     // 모든 MIDI 이벤트 저장 (악보 렌더링용)
     private val allMidiEvents = mutableListOf<MidiEvent>()
@@ -87,7 +92,7 @@ class MainActivity : AppCompatActivity() {
                 // 재생 중 마디 변경 시 서버 업로드
                 onMeasureChanged(currentMeasure)
             }
-            handler.postDelayed(this, 100) // 100ms마다 업데이트
+            handler.postDelayed(this, 50) // ms 마다 업데이트
         }
     }
 
@@ -107,6 +112,13 @@ class MainActivity : AppCompatActivity() {
         btnPrevMeasure = findViewById(R.id.btnPrevMeasure)
         btnNextMeasure = findViewById(R.id.btnNextMeasure)
         imgSheetMusic = findViewById(R.id.imgSheetMusic)
+        watermarkView = findViewById(R.id.watermarkView)
+
+        // 워터마크 설정
+        watermarkView.watermarkText = "CANTAMONY"
+        watermarkView.textColor = 0x80808080.toInt() // 더 진한 회색 (알파 50%)
+        watermarkView.textSize = 48f
+        watermarkView.rotationAngle = -45f
 
         txtBPM.text = "BPM: $initialBPM"
         seekBarBPM.progress = initialBPM
@@ -127,9 +139,10 @@ class MainActivity : AppCompatActivity() {
             assets.open(path).use { inputStream ->
                 val midiFile = MidiFile(inputStream)
 
-                // 첫 번째 파일에서만 TimeSignature와 Resolution 추출
+                // 첫 번째 파일에서만 TimeSignature, KeySignature와 Resolution 추출
                 if (index == 0) {
                     timeSignature = extractTimeSignature(midiFile)
+                    keySignature = extractKeySignature(midiFile)
                     midiResolution = midiFile.getResolution()
 
                     val numerator = timeSignature?.getNumerator() ?: 4
@@ -252,23 +265,32 @@ class MainActivity : AppCompatActivity() {
 
     /** 마디 변경 이벤트 핸들러 - 모든 마디 변경 지점에서 호출 */
     private fun onMeasureChanged(measure: Int) {
-        Log.d("SheetMusic", "onMeasureChanged called for measure $measure, lastUploaded: $lastUploadedMeasure, isRendering: $isRendering")
-        
+        Log.d(
+            "SheetMusic",
+            "onMeasureChanged called for measure $measure, lastUploaded: $lastUploadedMeasure, isRendering: $isRendering"
+        )
+
         // 마디가 변경되지 않았으면 무시
         if (measure == lastUploadedMeasure) {
             Log.d("SheetMusic", "Skipping render for measure $measure (same as last uploaded)")
             return
         }
-        
+
         // 진행 중이면 이전 작업 취소하고 새 마디로 즉시 렌더링 시작
         if (isRendering) {
-            Log.d("SheetMusic", "Cancelling previous render job and starting new render for measure $measure")
+            Log.d(
+                "SheetMusic",
+                "Cancelling previous render job and starting new render for measure $measure"
+            )
             currentRenderJob?.cancel()
             isRendering = false // 플래그 리셋
         }
 
         // 즉시 실행
-        Log.d("SheetMusic", "Starting render for measure $measure (different from last: $lastUploadedMeasure)")
+        Log.d(
+            "SheetMusic",
+            "Starting render for measure $measure (different from last: $lastUploadedMeasure)"
+        )
         pendingMeasure = -1
         renderAndUploadSheetMusic(measure)
     }
@@ -280,8 +302,9 @@ class MainActivity : AppCompatActivity() {
 
         currentRenderJob = uploadScope.launch {
             try {
-                val measureEvents = getEventsByMeasure(measure)
-                Log.d("SheetMusic", "Rendering measure $measure with ${measureEvents.size} events")
+                // 현재 마디와 다음 마디 이벤트 가져오기
+                val (currentEvents, nextEvents) = getEventsForTwoMeasures(measure)
+                Log.d("SheetMusic", "Rendering measure $measure with ${currentEvents.size} current events, ${nextEvents.size} next events")
 
                 // 렌더링 완료 대기용 Deferred
                 val renderComplete = CompletableDeferred<Boolean>()
@@ -292,7 +315,7 @@ class MainActivity : AppCompatActivity() {
                 // WebView 생성 및 설정을 메인 스레드에서 수행
                 val webView = withContext(Dispatchers.Main) {
                     // WebView 생성 (메인 스레드에서만 가능)
-                    val webView = createVexFlowWebView(measureEvents, measure, renderComplete)
+                    val webView = createVexFlowWebView(currentEvents, nextEvents, measure, renderComplete)
 
                     // WebViewClient 설정
                     webView.webViewClient = object : WebViewClient() {
@@ -308,9 +331,9 @@ class MainActivity : AppCompatActivity() {
                     parent?.let {
                         // FrameLayout의 경우 MarginLayoutParams 사용
                         val layoutParams = if (it is android.widget.FrameLayout) {
-                            android.widget.FrameLayout.LayoutParams(800, 400)
+                            android.widget.FrameLayout.LayoutParams(800, 500) // 높이 증가 (두 마디용)
                         } else {
-                            android.view.ViewGroup.LayoutParams(800, 400)
+                            android.view.ViewGroup.LayoutParams(800, 500)
                         }
                         webView.layoutParams = layoutParams
                         it.addView(webView)
@@ -326,11 +349,11 @@ class MainActivity : AppCompatActivity() {
                             android.view.View.MeasureSpec.EXACTLY
                         ),
                         android.view.View.MeasureSpec.makeMeasureSpec(
-                            400,
+                            500, // 높이 증가
                             android.view.View.MeasureSpec.EXACTLY
                         )
                     )
-                    webView.layout(0, 0, 800, 400)
+                    webView.layout(0, 0, 800, 500)
                     Log.d(
                         "SheetMusic",
                         "WebView added to parent, size: ${webView.width}x${webView.height}"
@@ -393,20 +416,19 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 // Base64 인코딩
-                val base64Image = bitmapToBase64(bitmap)
-                Log.d("SheetMusic", "Base64 image size: ${base64Image.length} bytes")
+                var sendImageSwitch = false;
+                if (sendImageSwitch) {
+                    val base64Image = bitmapToBase64(bitmap)
+                    Log.d("SheetMusic", "Base64 image size: ${base64Image.length} bytes")
+
+                    uploadSheetMusicToServer(base64Image, measure)
+                }
 
                 // 화면에 악보 이미지 표시
                 withContext(Dispatchers.Main) {
                     imgSheetMusic.setImageBitmap(bitmap)
                     Log.d("SheetMusic", "Image set to ImageView for measure $measure")
                 }
-
-                if (false) { //현재는 disable
-                    // 서버에 업로드
-                    uploadSheetMusicToServer(base64Image, measure)
-                }
-
                 // 업로드 완료
                 lastUploadedMeasure = measure
                 Log.d("SheetMusic", "Render and upload completed for measure $measure")
@@ -434,7 +456,8 @@ class MainActivity : AppCompatActivity() {
 
     /** VexFlow WebView 생성 */
     private fun createVexFlowWebView(
-        events: List<MidiEvent>,
+        currentEvents: List<MidiEvent>,
+        nextEvents: List<MidiEvent>,
         measure: Int,
         renderComplete: CompletableDeferred<Boolean>
     ): WebView {
@@ -454,40 +477,49 @@ class MainActivity : AppCompatActivity() {
                 Log.d("SheetMusic", "JavaScript: Render complete callback received")
                 renderComplete.complete(true)
             }
-            
+
             @android.webkit.JavascriptInterface
             fun log(message: String) {
                 Log.d("SheetMusic", "JS: $message")
             }
-            
+
             @android.webkit.JavascriptInterface
             fun logError(message: String) {
                 Log.e("SheetMusic", "JS Error: $message")
             }
         }, "AndroidInterface")
 
-        val html = generateVexFlowHTML(events, measure)
+        val html = generateVexFlowHTML(currentEvents, nextEvents, measure)
         webView.loadDataWithBaseURL("file:///android_asset/", html, "text/html", "UTF-8", null)
 
         return webView
     }
 
-    /** VexFlow HTML 생성 */
-    private fun generateVexFlowHTML(events: List<MidiEvent>, measure: Int): String {
+    /** 이벤트 리스트에서 노트 JSON과 총 박자 수 생성 */
+    private fun generateNotesFromEvents(events: List<MidiEvent>): Pair<String, Double> {
         val noteOnEvents = events.filter { it.isNoteOn }
-        Log.d("SheetMusic", "Found ${noteOnEvents.size} NoteOn events for measure $measure")
-        
+        val noteOffEvents = events.filter { !it.isNoteOn }
+        Log.d(
+            "SheetMusic",
+            "Found ${noteOnEvents.size} NoteOn events, ${noteOffEvents.size} NoteOff events"
+        )
+
         // 같은 시간(tick)에 연주되는 노트들을 그룹화하여 화음으로 만들기
         val notesByTick = noteOnEvents.groupBy { it.tick }.toSortedMap()
-        
+
+        // NoteOff 이벤트를 노트별로 매핑 (노트 길이 계산용)
+        val noteOffByNote = noteOffEvents.groupBy { it.note }
+
         // 시간 서명 정보 가져오기
         val numerator = timeSignature?.getNumerator() ?: 4
         val denominator = timeSignature?.getRealDenominator() ?: 4
-        
+
         // 각 시간 그룹에서 노트들을 화음으로 변환하고 duration 계산
-        val chordNotes = mutableListOf<Map<String, Any>>()
+        // 쉼표를 포함한 모든 음표/쉼표 리스트
+        val allElements = mutableListOf<Map<String, Any>>()
         var previousTick: Long? = null
-        
+        var previousNoteKey: String? = null // 타이 계산용
+
         notesByTick.forEach { (tick, tickEvents) ->
             // 바이올린 음역대: G3 (MIDI 55) ~ E7 (MIDI 100)
             // 트레블 클레프에 적합한 범위로 필터링
@@ -496,17 +528,20 @@ class MainActivity : AppCompatActivity() {
                 .filter { it.note in 48..100 } // 바이올린 확장 음역대 (C3 ~ E7)
                 .map { midiNoteToVexFlowNote(it.note) }
                 .sorted() // 정렬하여 일관성 유지
-            
-            Log.d("SheetMusic", "Tick $tick: ${tickEvents.size} events, ${validNotes.size} valid notes after filtering")
-            
+
+            Log.d(
+                "SheetMusic",
+                "Tick $tick: ${tickEvents.size} events, ${validNotes.size} valid notes after filtering"
+            )
+
             if (validNotes.isNotEmpty()) {
                 // 바이올린은 단선 악기이므로 가장 높은 멜로디 라인 선택
                 // 옥타브 4 이상의 노트를 우선 사용 (바이올린의 일반적인 연주 범위)
-                val trebleNotes = validNotes.filter { 
+                val trebleNotes = validNotes.filter {
                     val octave = it.split("/").getOrNull(1)?.toIntOrNull() ?: 0
                     octave >= 4
                 }
-                
+
                 // 옥타브 4 이상 노트가 있으면 그것을 사용, 없으면 가장 높은 노트 선택
                 val finalNotes = if (trebleNotes.isNotEmpty()) {
                     // 가장 높은 노트 선택 (멜로디 라인)
@@ -514,7 +549,7 @@ class MainActivity : AppCompatActivity() {
                         val parts = note.split("/")
                         val octave = parts.getOrNull(1)?.toIntOrNull() ?: 0
                         val noteName = parts.firstOrNull() ?: ""
-                        octave * 12 + when(noteName.lowercase()) {
+                        octave * 12 + when (noteName.lowercase()) {
                             "c" -> 0; "c#" -> 1; "d" -> 2; "d#" -> 3; "e" -> 4
                             "f" -> 5; "f#" -> 6; "g" -> 7; "g#" -> 8; "a" -> 9; "a#" -> 10; "b" -> 11
                             else -> 0
@@ -526,21 +561,63 @@ class MainActivity : AppCompatActivity() {
                         val parts = note.split("/")
                         val octave = parts.getOrNull(1)?.toIntOrNull() ?: 0
                         val noteName = parts.firstOrNull() ?: ""
-                        octave * 12 + when(noteName.lowercase()) {
+                        octave * 12 + when (noteName.lowercase()) {
                             "c" -> 0; "c#" -> 1; "d" -> 2; "d#" -> 3; "e" -> 4
                             "f" -> 5; "f#" -> 6; "g" -> 7; "g#" -> 8; "a" -> 9; "a#" -> 10; "b" -> 11
                             else -> 0
                         }
                     } ?: validNotes.first())
                 }
-                
+
                 if (finalNotes.isNotEmpty()) {
-                    // duration 계산: 이전 tick과의 차이를 기반으로
+                    // 이전 요소와의 간격 확인 (쉼표 추가용)
                     val prevTick = previousTick
+                    if (prevTick != null && tick > prevTick) {
+                        val tickDiff = tick - prevTick
+                        val resolution = midiResolution.toLong()
+
+                        // 간격이 충분히 크면 쉼표 추가
+                        if (tickDiff >= resolution / 8) { // 32분음표 이상의 간격
+                            val restDuration = when {
+                                tickDiff >= resolution * 2 -> "hr" // half rest
+                                tickDiff >= resolution -> "qr" // quarter rest
+                                tickDiff >= resolution / 2 -> "8r" // eighth rest
+                                tickDiff >= resolution / 4 -> "16r" // sixteenth rest
+                                tickDiff >= resolution / 8 -> "32r" // thirty-second rest
+                                else -> "8r" // 기본값
+                            }
+
+                            Log.d(
+                                "SheetMusic",
+                                "Adding rest: tick=$tick, prevTick=$prevTick, restDuration=$restDuration"
+                            )
+                            allElements.add(
+                                mapOf(
+                                    "type" to "rest",
+                                    "duration" to restDuration,
+                                    "tick" to prevTick
+                                )
+                            )
+                        }
+                    }
+
+                    // 노트의 실제 길이 계산 (NoteOff 이벤트 기반)
+                    val selectedNote = tickEvents.firstOrNull {
+                        val noteName = midiNoteToVexFlowNote(it.note)
+                        finalNotes.contains(noteName)
+                    }
+
+                    // NoteOff 이벤트 찾기 (노트 길이 계산용)
+                    val noteOffTick = noteOffEvents
+                        .filter { it.note == selectedNote?.note }
+                        .minOfOrNull { it.tick } ?: (tick + midiResolution.toLong())
+
+                    val noteDuration = noteOffTick - tick
+                    val resolution = midiResolution.toLong()
+
+                    // duration 계산: 이전 tick과의 차이를 기반으로
                     val duration = if (prevTick != null && tick > prevTick) {
                         val tickDiff = tick - prevTick
-                        // tick을 duration으로 변환 (480 ticks = quarter note, midiResolution 기준)
-                        val resolution = midiResolution.toLong()
                         when {
                             tickDiff >= resolution * 2 -> "h" // half note (2 beats)
                             tickDiff >= resolution -> "q" // quarter note (1 beat)
@@ -552,69 +629,411 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         "q" // 첫 번째 노트는 기본 quarter note
                     }
-                    
-                    Log.d("SheetMusic", "Tick: $tick, prevTick: $prevTick, duration: $duration")
-                    
+
+                    // velocity 정보도 저장 (다이나믹 마크용)
+                    val velocity = selectedNote?.velocity ?: 64
+
+                    // 타이 확인: 이전 노트와 같은 음표인지 확인
+                    val currentNoteKey = finalNotes.first()
+                    val needsTie = previousNoteKey != null && previousNoteKey == currentNoteKey
+
+                    // 아티큘레이션 계산 (NoteOn/NoteOff 간격 기반)
+                    // 노트 길이 대비 실제 연주 길이 비율로 추정
+                    val articulation = when {
+                        noteDuration < resolution * 0.3 -> "staccato" // 스타카토: 30% 미만
+                        noteDuration >= resolution * 0.9 -> "legato" // 레가토: 90% 이상
+                        else -> "normal" // 일반
+                    }
+
+                    Log.d(
+                        "SheetMusic",
+                        "Tick: $tick, prevTick: $prevTick, duration: $duration, velocity: $velocity, needsTie: $needsTie, articulation: $articulation"
+                    )
+
                     // 첫 번째 노트만 사용 (단일 노트로 표시)
-                    chordNotes.add(mapOf(
-                        "keys" to listOf(finalNotes.first()),
-                        "duration" to duration,
-                        "tick" to tick
-                    ))
-                    
+                    allElements.add(
+                        mapOf(
+                            "type" to "note",
+                            "keys" to listOf(currentNoteKey),
+                            "duration" to duration,
+                            "tick" to tick,
+                            "velocity" to velocity,
+                            "needsTie" to needsTie,
+                            "articulation" to articulation
+                        )
+                    )
+
                     previousTick = tick
+                    previousNoteKey = currentNoteKey
                 }
             }
         }
-        
-        Log.d("SheetMusic", "Grouped into ${chordNotes.size} chords from ${noteOnEvents.size} events")
-        if (chordNotes.isEmpty()) {
+
+        Log.d(
+            "SheetMusic",
+            "Grouped into ${allElements.size} elements (notes + rests) from ${noteOnEvents.size} events"
+        )
+        if (allElements.isEmpty()) {
             Log.w("SheetMusic", "No valid notes found after filtering! Check note range.")
         }
 
-        val notesJson = if (chordNotes.isEmpty()) {
-            Log.w("SheetMusic", "No valid notes found for measure $measure, using placeholder")
+        val notesJson = if (allElements.isEmpty()) {
+            Log.w("SheetMusic", "No valid notes found, using placeholder")
             "new VF.StaveNote({ clef: 'treble', keys: ['b/4'], duration: 'w' })"
         } else {
-            // 마디 내의 노트들을 시간 순서대로 정렬하여 표시
-            // 계산된 duration 값을 사용하여 다양한 음표 길이 표시
-            // 최대 8개 노트만 표시 (한 마디에 적합한 수)
-            val notesToRender = chordNotes.take(8)
-            notesToRender.joinToString(",\n                ") { chord ->
-                val keysStr = chord["keys"] as List<String>
-                val duration = chord["duration"] as String  // 계산된 duration 사용
-                // 첫 번째 노트만 사용 (화음이 아닌 단일 노트로)
-                val firstKey = keysStr.firstOrNull() ?: "c/4"
-                "new VF.StaveNote({ clef: 'treble', keys: ['$firstKey'], duration: '$duration' })"
+            // 마디 내의 모든 요소(노트 + 쉼표)를 시간 순서대로 정렬하여 표시
+            // 최대 16개 요소만 표시 (한 마디에 적합한 수)
+            val elementsToRender = allElements.take(16)
+            elementsToRender.joinToString(",\n                ") { element ->
+                val elementType = element["type"] as String
+                val duration = element["duration"] as String
+
+                when (elementType) {
+                    "rest" -> {
+                        // 쉼표 생성 (VexFlow는 duration에 'r'을 붙여서 쉼표로 표시)
+                        // 쉼표는 keys를 빈 배열로 하거나 특정 키를 사용할 수 있음
+                        // VexFlow는 쉼표를 자동으로 처리하므로 keys는 임의로 설정 가능
+                        "new VF.StaveNote({ clef: 'treble', keys: ['b/4'], duration: '$duration' })"
+                    }
+
+                    "note" -> {
+                        // 노트 생성 (velocity 정보 포함)
+                        val keysStr = element["keys"] as List<String>
+                        val firstKey = keysStr.firstOrNull() ?: "c/4"
+                        val velocity = element["velocity"] as? Int ?: 64
+                        val needsTie = element["needsTie"] as? Boolean ?: false
+                        val articulation = element["articulation"] as? String ?: "normal"
+                        // velocity는 나중에 다이나믹 마크로 추가
+                        // needsTie는 나중에 타이로 추가
+                        // articulation은 나중에 아티큘레이션으로 추가
+                        "new VF.StaveNote({ clef: 'treble', keys: ['$firstKey'], duration: '$duration', velocity: $velocity, needsTie: $needsTie, articulation: '$articulation' })"
+                    }
+
+                    else -> {
+                        // 기본값
+                        "new VF.StaveNote({ clef: 'treble', keys: ['c/4'], duration: 'q' })"
+                    }
+                }
             }
         }
-        
-        // 렌더링할 노트들의 총 박자 수 계산 (각 노트의 duration을 합산)
-        val notesToRender = chordNotes.take(8)
-        val totalBeats = notesToRender.sumOf { chord ->
-            when (chord["duration"] as String) {
-                "w" -> 4.0
-                "h" -> 2.0
-                "q" -> 1.0
-                "8" -> 0.5
-                "16" -> 0.25
-                "32" -> 0.125
+
+        // 렌더링할 요소들의 총 박자 수 계산 (각 요소의 duration을 합산)
+        val elementsToRender = allElements.take(16)
+        val totalBeats = elementsToRender.sumOf { element ->
+            val duration = element["duration"] as String
+            when {
+                duration.startsWith("w") -> 4.0
+                duration.startsWith("h") -> 2.0
+                duration.startsWith("q") -> 1.0
+                duration.startsWith("8") -> 0.5
+                duration.startsWith("16") -> 0.25
+                duration.startsWith("32") -> 0.125
                 else -> 1.0
             }
         }
-        
-        Log.d("SheetMusic", "Total beats calculated: $totalBeats, time signature: $numerator/$denominator, notes to render: ${notesToRender.size}")
+
+        Log.d(
+            "SheetMusic",
+            "Total beats calculated: $totalBeats, time signature: $numerator/$denominator, elements to render: ${elementsToRender.size}"
+        )
         Log.d("SheetMusic", "Generated notes JSON (first 500 chars): ${notesJson.take(500)}")
-        
-        // HTML에 totalBeats와 time signature 정보 전달
-        return generateVexFlowHTMLWithBeats(notesJson, totalBeats, numerator, denominator)
+
+        return Pair(notesJson, totalBeats)
     }
-    
-    /** VexFlow HTML 생성 (박자 정보 포함) */
-    private fun generateVexFlowHTMLWithBeats(notesJson: String, totalBeats: Double, numerator: Int, denominator: Int): String {
+
+    /** VexFlow HTML 생성 (현재 마디 + 다음 마디) */
+    private fun generateVexFlowHTML(
+        currentEvents: List<MidiEvent>,
+        nextEvents: List<MidiEvent>,
+        measure: Int
+    ): String {
+        // 현재 마디 노트 생성
+        val (currentNotesJson, currentTotalBeats) = generateNotesFromEvents(currentEvents)
+        
+        // 다음 마디 노트 생성
+        val (nextNotesJson, nextTotalBeats) = if (nextEvents.isNotEmpty()) {
+            generateNotesFromEvents(nextEvents)
+        } else {
+            Pair("", 0.0)
+        }
+
+        // 시간 서명 정보 가져오기
+        val numerator = timeSignature?.getNumerator() ?: 4
+        val denominator = timeSignature?.getRealDenominator() ?: 4
+        val keySigStr = keySignatureToVexFlow(keySignature)
+        
+        return generateVexFlowHTMLWithTwoStaves(
+            currentNotesJson, currentTotalBeats,
+            nextNotesJson, nextTotalBeats,
+            numerator, denominator, keySigStr
+        )
+    }
+
+    /** VexFlow HTML 생성 (두 개의 Stave - 현재 마디 + 다음 마디) */
+    private fun generateVexFlowHTMLWithTwoStaves(
+        currentNotesJson: String,
+        currentTotalBeats: Double,
+        nextNotesJson: String,
+        nextTotalBeats: Double,
+        numerator: Int,
+        denominator: Int,
+        keySignature: String = "C"
+    ): String {
+        val currentNumBeats = currentTotalBeats.coerceAtLeast(numerator.toDouble()).toInt()
+        val nextNumBeats = if (nextTotalBeats > 0) {
+            nextTotalBeats.coerceAtLeast(numerator.toDouble()).toInt()
+        } else {
+            0
+        }
+
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <script src="vexflow/vexflow-min.js"></script>
+            <style>
+                body { margin: 0; padding: 10px; background: white; overflow: visible; }
+                #sheet { width: 100%; height: 100%; overflow: visible; }
+                svg { display: block; }
+                #nextMeasure { opacity: 0.5; }
+            </style>
+        </head>
+        <body>
+            <div id="sheet"></div>
+            <script>
+                // 로그 함수
+                function log(msg) {
+                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.log) {
+                        AndroidInterface.log(msg);
+                    } else {
+                        console.log(msg);
+                    }
+                }
+                
+                function logError(msg) {
+                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.logError) {
+                        AndroidInterface.logError(msg);
+                    } else {
+                        console.error(msg);
+                    }
+                }
+                
+                var div = document.getElementById("sheet");
+                if (!div) {
+                    logError('Sheet div not found');
+                } else {
+                    try {
+                        log('Starting VexFlow rendering with two staves...');
+                        var VF = Vex.Flow;
+                        log('VexFlow loaded: ' + (typeof VF !== 'undefined'));
+                        
+                        var renderer = new VF.Renderer(div, VF.Renderer.Backends.SVG);
+                        renderer.resize(800, 500); // 높이 증가 (두 마디용)
+                        var context = renderer.getContext();
+                        
+                        // 현재 마디 Stave (위쪽)
+                        var stave1 = new VF.Stave(10, 50, 750);
+                        stave1.addClef("treble");
+                        stave1.addKeySignature("$keySignature");
+                        stave1.addTimeSignature("$numerator/$denominator");
+                        stave1.setContext(context).draw();
+                        log('Current measure stave drawn at (10, 50)');
+                        
+                        var currentNotes = ${if (currentNotesJson.isBlank()) "[]" else "[$currentNotesJson]"}
+                        log('Current measure notes: ' + currentNotes.length);
+                        
+                        if (currentNotes.length > 0) {
+                            // 현재 마디 노트 렌더링
+                            var numerator = $numerator;
+                            var denominator = $denominator;
+                            
+                            var beatAccumulator = 0;
+                            var durationFractionMap = {
+                                'w': 1, 'wr': 1, 'h': 1/2, 'hr': 1/2,
+                                'q': 1/4, 'qr': 1/4, '8': 1/8, '8r': 1/8,
+                                '16': 1/16, '16r': 1/16, '32': 1/32, '32r': 1/32
+                            };
+                            
+                            var beamableNotes = [];
+                            currentNotes.forEach(function(note) {
+                                try {
+                                    var duration = note.getDuration();
+                                    var fraction = durationFractionMap[duration] || 1/4;
+                                    beatAccumulator += fraction;
+                                    if (duration === '8' || duration === '16' || duration === '32') {
+                                        beamableNotes.push(note);
+                                    }
+                                } catch (e) {
+                                    logError('Error getting duration: ' + e.message);
+                                    beatAccumulator += 1/4;
+                                }
+                            });
+                            
+                            var beatDuration = 4;
+                            var totalBeats = beatAccumulator / (1 / beatDuration);
+                            var voiceBeats = Math.max(totalBeats, numerator);
+                            
+                            var voice1 = new VF.Voice({ num_beats: voiceBeats, beat_value: beatDuration });
+                            voice1.addTickables(currentNotes);
+                            
+                            try {
+                                var formatter1 = new VF.Formatter().joinVoices([voice1]).format([voice1], 600);
+                                voice1.draw(context, stave1);
+                                
+                                // 베벨 추가
+                                if (beamableNotes.length > 1) {
+                                    var beamGroups = [];
+                                    var currentGroup = [];
+                                    for (var i = 0; i < beamableNotes.length; i++) {
+                                        var note = beamableNotes[i];
+                                        var duration = note.getDuration();
+                                        if (currentGroup.length === 0 || currentGroup[0].getDuration() === duration) {
+                                            currentGroup.push(note);
+                                        } else {
+                                            if (currentGroup.length > 1) beamGroups.push(currentGroup);
+                                            currentGroup = [note];
+                                        }
+                                    }
+                                    if (currentGroup.length > 1) beamGroups.push(currentGroup);
+                                    beamGroups.forEach(function(group) {
+                                        try {
+                                            var beam = new VF.Beam(group);
+                                            beam.setContext(context);
+                                            beam.draw();
+                                        } catch (e) {
+                                            logError('Error adding beam: ' + e.message);
+                                        }
+                                    });
+                                }
+                                
+                                // 다이나믹 마크, 타이, 아티큘레이션 등 추가 (기존 로직)
+                                // ... (기존 코드와 동일)
+                                
+                            } catch (e) {
+                                logError('Error rendering current measure: ' + e.message);
+                            }
+                        }
+                        
+                        // 다음 마디 Stave (아래쪽, 회색)
+                        var nextNotes = ${if (nextNotesJson.isBlank()) "[]" else "[$nextNotesJson]"}
+                        log('Next measure notes: ' + nextNotes.length);
+                        
+                        if (nextNotes.length > 0) {
+                            // SVG 그룹 시작 (회색 적용용)
+                            context.openGroup("nextMeasure", { id: "nextMeasure" });
+                            
+                            var stave2 = new VF.Stave(10, 250, 750); // y 좌표를 아래로 이동
+                            stave2.addClef("treble");
+                            stave2.addKeySignature("$keySignature");
+                            stave2.addTimeSignature("$numerator/$denominator");
+                            stave2.setContext(context);
+                            
+                            // 회색으로 그리기
+                            context.setFillStyle("#999999");
+                            context.setStrokeStyle("#999999");
+                            stave2.draw();
+                            
+                            // 다음 마디 노트 렌더링
+                            var beatAccumulator2 = 0;
+                            var beamableNotes2 = [];
+                            nextNotes.forEach(function(note) {
+                                try {
+                                    var duration = note.getDuration();
+                                    var fraction = durationFractionMap[duration] || 1/4;
+                                    beatAccumulator2 += fraction;
+                                    if (duration === '8' || duration === '16' || duration === '32') {
+                                        beamableNotes2.push(note);
+                                    }
+                                } catch (e) {
+                                    beatAccumulator2 += 1/4;
+                                }
+                            });
+                            
+                            var totalBeats2 = beatAccumulator2 / (1 / beatDuration);
+                            var voiceBeats2 = Math.max(totalBeats2, numerator);
+                            
+                            var voice2 = new VF.Voice({ num_beats: voiceBeats2, beat_value: beatDuration });
+                            voice2.addTickables(nextNotes);
+                            
+                            try {
+                                var formatter2 = new VF.Formatter().joinVoices([voice2]).format([voice2], 600);
+                                voice2.draw(context, stave2);
+                                
+                                // 베벨 추가
+                                if (beamableNotes2.length > 1) {
+                                    var beamGroups2 = [];
+                                    var currentGroup2 = [];
+                                    for (var i = 0; i < beamableNotes2.length; i++) {
+                                        var note = beamableNotes2[i];
+                                        var duration = note.getDuration();
+                                        if (currentGroup2.length === 0 || currentGroup2[0].getDuration() === duration) {
+                                            currentGroup2.push(note);
+                                        } else {
+                                            if (currentGroup2.length > 1) beamGroups2.push(currentGroup2);
+                                            currentGroup2 = [note];
+                                        }
+                                    }
+                                    if (currentGroup2.length > 1) beamGroups2.push(currentGroup2);
+                                    beamGroups2.forEach(function(group) {
+                                        try {
+                                            var beam = new VF.Beam(group);
+                                            beam.setContext(context);
+                                            beam.draw();
+                                        } catch (e) {
+                                            logError('Error adding beam: ' + e.message);
+                                        }
+                                    });
+                                }
+                            } catch (e) {
+                                logError('Error rendering next measure: ' + e.message);
+                            }
+                            
+                            context.closeGroup();
+                            
+                            // SVG 요소에 opacity 적용
+                            setTimeout(function() {
+                                var svg = div.querySelector('svg');
+                                if (svg) {
+                                    var nextMeasureGroup = svg.querySelector('#nextMeasure');
+                                    if (nextMeasureGroup) {
+                                        nextMeasureGroup.setAttribute('opacity', '0.5');
+                                        // 모든 path, circle, ellipse, line 요소를 회색으로 변경
+                                        var elements = nextMeasureGroup.querySelectorAll('path, circle, ellipse, line, text');
+                                        elements.forEach(function(el) {
+                                            el.setAttribute('stroke', '#999999');
+                                            el.setAttribute('fill', '#999999');
+                                        });
+                                    }
+                                }
+                                AndroidInterface.onRenderComplete();
+                            }, 100);
+                        } else {
+                            AndroidInterface.onRenderComplete();
+                        }
+                        
+                    } catch (e) {
+                        logError('Rendering error: ' + e.message);
+                        logError('Stack: ' + e.stack);
+                        AndroidInterface.onRenderComplete();
+                    }
+                }
+            </script>
+        </body>
+        </html>
+        """
+    }
+
+    /** VexFlow HTML 생성 (박자 정보 포함) - 단일 마디용 (하위 호환성) */
+    private fun generateVexFlowHTMLWithBeats(
+        notesJson: String,
+        totalBeats: Double,
+        numerator: Int,
+        denominator: Int,
+        keySignature: String = "C"
+    ): String {
         // 박자 수를 정수로 올림 (최소 마디의 박자 수)
         val numBeats = totalBeats.coerceAtLeast(numerator.toDouble()).toInt()
-        
+
         return """
         <!DOCTYPE html>
         <html>
@@ -661,9 +1080,11 @@ class MainActivity : AppCompatActivity() {
                         
                         // Stave 위치 조정 (더 넓은 공간 확보)
                         var stave = new VF.Stave(10, 50, 750);
-                        stave.addClef("treble").addTimeSignature("$numerator/$denominator");
+                        stave.addClef("treble");
+                        stave.addKeySignature("$keySignature");
+                        stave.addTimeSignature("$numerator/$denominator");
                         stave.setContext(context).draw();
-                        log('Stave drawn with time signature: $numerator/$denominator at (10, 50)');
+                        log('Stave drawn with key signature: $keySignature, time signature: $numerator/$denominator at (10, 50)');
                         
                         var notes = ${if (notesJson.isBlank()) "[]" else "[$notesJson]"}
                         
@@ -691,18 +1112,32 @@ class MainActivity : AppCompatActivity() {
                             var beatAccumulator = 0;
                             var durationFractionMap = {
                                 'w': 1,      // whole note = 1
+                                'wr': 1,     // whole rest = 1
                                 'h': 1/2,    // half note = 1/2
+                                'hr': 1/2,   // half rest = 1/2
                                 'q': 1/4,    // quarter note = 1/4
+                                'qr': 1/4,   // quarter rest = 1/4
                                 '8': 1/8,    // eighth note = 1/8
+                                '8r': 1/8,   // eighth rest = 1/8
                                 '16': 1/16,  // sixteenth note = 1/16
-                                '32': 1/32   // thirty-second note = 1/32
+                                '16r': 1/16, // sixteenth rest = 1/16
+                                '32': 1/32,  // thirty-second note = 1/32
+                                '32r': 1/32  // thirty-second rest = 1/32
                             };
                             
-                            notes.forEach(function(note) {
+                            // 베벨을 위한 노트 그룹 (8분음표, 16분음표 등)
+                            var beamableNotes = [];
+                            
+                            notes.forEach(function(note, index) {
                                 try {
                                     var duration = note.getDuration();
                                     var fraction = durationFractionMap[duration] || 1/4; // 기본값: quarter note
                                     beatAccumulator += fraction;
+                                    
+                                    // 베벨 가능한 노트 수집 (8분음표, 16분음표 등)
+                                    if (duration === '8' || duration === '16' || duration === '32') {
+                                        beamableNotes.push(note);
+                                    }
                                 } catch (e) {
                                     logError('Error getting duration: ' + e.message);
                                     beatAccumulator += 1/4; // 기본값: quarter note
@@ -751,6 +1186,221 @@ class MainActivity : AppCompatActivity() {
                                 if (formatterSuccess) {
                                     voice.draw(context, stave);
                                     log('Notes drawn successfully');
+                                    
+                                    // 베벨 추가 (8분음표, 16분음표 등)
+                                    if (beamableNotes.length > 1) {
+                                        try {
+                                            // 같은 duration의 연속된 노트들을 그룹화
+                                            var beamGroups = [];
+                                            var currentGroup = [];
+                                            
+                                            for (var i = 0; i < beamableNotes.length; i++) {
+                                                var note = beamableNotes[i];
+                                                var duration = note.getDuration();
+                                                
+                                                if (currentGroup.length === 0 || 
+                                                    currentGroup[0].getDuration() === duration) {
+                                                    currentGroup.push(note);
+                                                } else {
+                                                    if (currentGroup.length > 1) {
+                                                        beamGroups.push(currentGroup);
+                                                    }
+                                                    currentGroup = [note];
+                                                }
+                                            }
+                                            
+                                            if (currentGroup.length > 1) {
+                                                beamGroups.push(currentGroup);
+                                            }
+                                            
+                                            // 각 그룹에 베벨 추가
+                                            beamGroups.forEach(function(group) {
+                                                try {
+                                                    var beam = new VF.Beam(group);
+                                                    beam.setContext(context);
+                                                    beam.draw();
+                                                    log('Added beam for ' + group.length + ' notes');
+                                                } catch (e) {
+                                                    logError('Error adding beam: ' + e.message);
+                                                }
+                                            });
+                                        } catch (e) {
+                                            logError('Error processing beams: ' + e.message);
+                                        }
+                                    }
+                                    
+                                    // 타이 추가 (needsTie가 true인 노트들)
+                                    var tiePairs = [];
+                                    for (var i = 1; i < notes.length; i++) {
+                                        try {
+                                            var currentNote = notes[i];
+                                            var previousNote = notes[i - 1];
+                                            
+                                            if (currentNote.needsTie === true) {
+                                                // 같은 음표인지 확인
+                                                var currentKeys = currentNote.getKeys();
+                                                var previousKeys = previousNote.getKeys();
+                                                
+                                                if (currentKeys.length > 0 && previousKeys.length > 0 &&
+                                                    currentKeys[0] === previousKeys[0]) {
+                                                    tiePairs.push([previousNote, currentNote]);
+                                                    log('Added tie pair for note: ' + currentKeys[0]);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            logError('Error processing tie: ' + e.message);
+                                        }
+                                    }
+                                    
+                                    // 타이 그리기
+                                    tiePairs.forEach(function(pair) {
+                                        try {
+                                            var tie = new VF.StaveTie({
+                                                first_note: pair[0],
+                                                last_note: pair[1],
+                                                first_indices: [0],
+                                                last_indices: [0]
+                                            });
+                                            tie.setContext(context);
+                                            tie.draw();
+                                            log('Drew tie between notes');
+                                        } catch (e) {
+                                            logError('Error drawing tie: ' + e.message);
+                                        }
+                                    });
+                                    
+                                    // 아티큘레이션 추가
+                                    notes.forEach(function(note, index) {
+                                        try {
+                                            if (note.articulation !== undefined && note.articulation !== 'normal') {
+                                                try {
+                                                    var articulationType = note.articulation;
+                                                    if (articulationType === 'staccato') {
+                                                        // 스타카토: 점 추가
+                                                        var dot = new VF.Articulation('a.');
+                                                        dot.setPosition(3); // 노트 위
+                                                        note.addArticulation(0, dot);
+                                                        log('Added staccato articulation');
+                                                    } else if (articulationType === 'legato') {
+                                                        // 레가토: 슬러로 표시 (나중에 슬러 섹션에서 처리)
+                                                        log('Legato articulation detected (will be handled by slur)');
+                                                    }
+                                                } catch (e) {
+                                                    logError('Error adding articulation: ' + e.message);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            logError('Error processing note for articulation: ' + e.message);
+                                        }
+                                    });
+                                    
+                                    // 슬러 추가 (레가토 패턴 또는 연속된 노트)
+                                    var slurGroups = [];
+                                    var currentSlurGroup = [];
+                                    
+                                    for (var i = 0; i < notes.length; i++) {
+                                        var note = notes[i];
+                                        var isLegato = note.articulation === 'legato';
+                                        var isShortGap = false;
+                                        
+                                        // 이전 노트와의 간격 확인
+                                        if (i > 0) {
+                                            try {
+                                                var prevNote = notes[i - 1];
+                                                var prevKeys = prevNote.getKeys();
+                                                var currentKeys = note.getKeys();
+                                                
+                                                // 같은 음표가 아니고, 간격이 짧으면 슬러 그룹에 추가
+                                                if (prevKeys.length > 0 && currentKeys.length > 0 &&
+                                                    prevKeys[0] !== currentKeys[0]) {
+                                                    isShortGap = true;
+                                                }
+                                            } catch (e) {
+                                                logError('Error checking note gap: ' + e.message);
+                                            }
+                                        }
+                                        
+                                        if (isLegato || isShortGap) {
+                                            if (currentSlurGroup.length === 0 && i > 0) {
+                                                currentSlurGroup.push(notes[i - 1]);
+                                            }
+                                            currentSlurGroup.push(note);
+                                        } else {
+                                            if (currentSlurGroup.length > 1) {
+                                                slurGroups.push(currentSlurGroup);
+                                            }
+                                            currentSlurGroup = [];
+                                        }
+                                    }
+                                    
+                                    if (currentSlurGroup.length > 1) {
+                                        slurGroups.push(currentSlurGroup);
+                                    }
+                                    
+                                    // 슬러 그리기
+                                    slurGroups.forEach(function(group) {
+                                        try {
+                                            if (group.length >= 2) {
+                                                var slur = new VF.Curve({
+                                                    from: group[0],
+                                                    to: group[group.length - 1],
+                                                    cps: [{x: 0, y: 10}, {x: 0, y: 10}]
+                                                });
+                                                slur.setContext(context);
+                                                slur.draw();
+                                                log('Added slur for ' + group.length + ' notes');
+                                            }
+                                        } catch (e) {
+                                            logError('Error drawing slur: ' + e.message);
+                                        }
+                                    });
+                                    
+                                    // 다이나믹 마크 추가 (velocity 기반)
+                                    notes.forEach(function(note, index) {
+                                        try {
+                                            // velocity 정보가 있으면 다이나믹 마크 추가
+                                            if (note.velocity !== undefined) {
+                                                var velocity = note.velocity;
+                                                var dynamicMark = '';
+                                                if (velocity < 40) {
+                                                    dynamicMark = 'pp'; // pianissimo
+                                                } else if (velocity < 60) {
+                                                    dynamicMark = 'p'; // piano
+                                                } else if (velocity < 80) {
+                                                    dynamicMark = 'mp'; // mezzo-piano
+                                                } else if (velocity < 100) {
+                                                    dynamicMark = 'mf'; // mezzo-forte
+                                                } else if (velocity < 120) {
+                                                    dynamicMark = 'f'; // forte
+                                                } else {
+                                                    dynamicMark = 'ff'; // fortissimo
+                                                }
+                                                
+                                                // Annotation을 사용하여 다이나믹 마크 추가
+                                                try {
+                                                    var annotation = new VF.Annotation(dynamicMark);
+                                                    annotation.setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM);
+                                                    note.addAnnotation(annotation);
+                                                    log('Added dynamic mark: ' + dynamicMark + ' at velocity: ' + velocity);
+                                                } catch (e) {
+                                                    logError('Error adding dynamic mark: ' + e.message);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            logError('Error processing note for dynamics: ' + e.message);
+                                        }
+                                    });
+                                    
+                                    // 다이나믹 마크가 추가된 노트 다시 그리기
+                                    notes.forEach(function(note) {
+                                        try {
+                                            note.setContext(context);
+                                            note.setStave(stave);
+                                            note.draw();
+                                        } catch (e) {
+                                            logError('Error redrawing note with annotation: ' + e.message);
+                                        }
+                                    });
                                 } else {
                                     logError('Cannot draw without formatter - skipping');
                                 }
@@ -902,28 +1552,62 @@ class MainActivity : AppCompatActivity() {
     private fun getEventsByMeasure(measure: Int): List<MidiEvent> {
         val startTick = measureToTick(measure)
         val endTick = measureToTick(measure + 1)
-        
-        Log.d("SheetMusic", "Getting events for measure $measure: tick range [$startTick, $endTick)")
+
+        Log.d(
+            "SheetMusic",
+            "Getting events for measure $measure: tick range [$startTick, $endTick)"
+        )
         Log.d("SheetMusic", "Total events in allMidiEvents: ${allMidiEvents.size}")
 
         val filtered = allMidiEvents.filter { event ->
             event.tick >= startTick && event.tick < endTick
         }.sortedBy { it.tick }
-        
+
         Log.d("SheetMusic", "Filtered events count: ${filtered.size}")
         filtered.forEach { event ->
-            Log.d("SheetMusic", "  Event: tick=${event.tick}, note=${event.note}, isNoteOn=${event.isNoteOn}")
+            Log.d(
+                "SheetMusic",
+                "  Event: tick=${event.tick}, note=${event.note}, isNoteOn=${event.isNoteOn}"
+            )
         }
-        
+
         return filtered
+    }
+
+    /** 현재 마디와 다음 마디의 이벤트 가져오기 */
+    private fun getEventsForTwoMeasures(currentMeasure: Int): Pair<List<MidiEvent>, List<MidiEvent>> {
+        val currentEvents = getEventsByMeasure(currentMeasure)
+        val nextMeasure = currentMeasure + 1
+        val nextEvents = if (nextMeasure <= totalMeasures) {
+            getEventsByMeasure(nextMeasure)
+        } else {
+            emptyList()
+        }
+        Log.d("SheetMusic", "Two measures: current=$currentMeasure (${currentEvents.size} events), next=$nextMeasure (${nextEvents.size} events)")
+        return Pair(currentEvents, nextEvents)
     }
 
     /** 이전 마디로 이동 */
     private fun moveToPreviousMeasure() {
-        val currentMeasure = tickToMeasure(multiPlayer.getCurrentTick())
-        if (currentMeasure > 1) {
-            val targetMeasure = currentMeasure - 1
+        val currentTick = multiPlayer.getCurrentTick()
+
+        if (ticksPerMeasure > 0 && currentTick > 0) {
+            // 현재 마디 계산
+            val currentMeasure = tickToMeasure(currentTick)
+
+            // 이전 마디로 이동 (최소 1마디)
+            val targetMeasure = (currentMeasure - 1).coerceAtLeast(1)
             val targetTick = measureToTick(targetMeasure)
+
+            Log.d(
+                "MeasureNav",
+                "Previous: currentTick=$currentTick, currentMeasure=$currentMeasure, targetMeasure=$targetMeasure, targetTick=$targetTick"
+            )
+
+            // 재생 상태 확인
+            val wasPlaying = multiPlayer.isPlaying()
+
+            // 마디 이동 (seek)
             multiPlayer.seekTo(targetTick)
             updateMeasureDisplay(targetMeasure)
             seekBarMeasure.progress = (targetMeasure - 1).coerceAtLeast(0)
@@ -931,15 +1615,14 @@ class MainActivity : AppCompatActivity() {
             // 마디 변경 이벤트 발생
             onMeasureChanged(targetMeasure)
 
-            // 재생 중이면 seek 후 계속 재생
-            val wasPlaying = multiPlayer.isPlaying()
+            // 재생 중이었으면 seek 후 계속 재생, 아니면 재생하지 않음
             if (wasPlaying) {
+                // 재생 중이었으면 seek 후 재생 계속
                 multiPlayer.stopAll()
-            }
-            multiPlayer.startAll()
-            if (wasPlaying) {
+                multiPlayer.startAll()
                 handler.post(updateRunnable)
             }
+            // 재생 중이 아니었으면 재생하지 않음 (마디만 이동)
         }
     }
 
@@ -949,6 +1632,11 @@ class MainActivity : AppCompatActivity() {
         if (currentMeasure < totalMeasures) {
             val targetMeasure = currentMeasure + 1
             val targetTick = measureToTick(targetMeasure)
+
+            // 재생 상태 확인
+            val wasPlaying = multiPlayer.isPlaying()
+
+            // 마디 이동 (seek)
             multiPlayer.seekTo(targetTick)
             updateMeasureDisplay(targetMeasure)
             seekBarMeasure.progress = targetMeasure - 1
@@ -956,15 +1644,14 @@ class MainActivity : AppCompatActivity() {
             // 마디 변경 이벤트 발생
             onMeasureChanged(targetMeasure)
 
-            // 재생 중이면 seek 후 계속 재생
-            val wasPlaying = multiPlayer.isPlaying()
+            // 재생 중이었으면 seek 후 계속 재생, 아니면 재생하지 않음
             if (wasPlaying) {
+                // 재생 중이었으면 seek 후 재생 계속
                 multiPlayer.stopAll()
-            }
-            multiPlayer.startAll()
-            if (wasPlaying) {
+                multiPlayer.startAll()
                 handler.post(updateRunnable)
             }
+            // 재생 중이 아니었으면 재생하지 않음 (마디만 이동)
         }
     }
 
@@ -978,6 +1665,57 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return null
+    }
+
+    private fun extractKeySignature(midiFile: MidiFile): KeySignature? {
+        for (track in midiFile.tracks) {
+            for (event in track.events) {
+                if (event is KeySignature) {
+                    return event
+                }
+            }
+        }
+        return null
+    }
+
+    /** KeySignature를 VexFlow 형식으로 변환 */
+    private fun keySignatureToVexFlow(keySignature: KeySignature?): String {
+        if (keySignature == null) {
+            return "C" // 기본값: C major
+        }
+
+        val key = keySignature.key
+        val scale = keySignature.scale
+
+        // Major/Minor에 따른 조표 문자열 생성
+        val majorKeys = mapOf(
+            -7 to "Cb", -6 to "Gb", -5 to "Db", -4 to "Ab", -3 to "Eb", -2 to "Bb", -1 to "F",
+            0 to "C", 1 to "G", 2 to "D", 3 to "A", 4 to "E", 5 to "B", 6 to "F#", 7 to "C#"
+        )
+
+        val minorKeys = mapOf(
+            -7 to "Abm",
+            -6 to "Ebm",
+            -5 to "Bbm",
+            -4 to "Fm",
+            -3 to "Cm",
+            -2 to "Gm",
+            -1 to "Dm",
+            0 to "Am",
+            1 to "Em",
+            2 to "Bm",
+            3 to "F#m",
+            4 to "C#m",
+            5 to "G#m",
+            6 to "D#m",
+            7 to "A#m"
+        )
+
+        return if (scale == KeySignature.SCALE_MINOR) {
+            minorKeys[key] ?: "Am"
+        } else {
+            majorKeys[key] ?: "C"
+        }
     }
 
     /** Tick을 마디로 변환 */

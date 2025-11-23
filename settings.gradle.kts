@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "android-midi-synth"
+rootProject.name = "Cantamony(Cantabile Project, Alpha)"
 include(":app")
  

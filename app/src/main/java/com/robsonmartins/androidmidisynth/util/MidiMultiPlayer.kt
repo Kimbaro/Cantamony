@@ -44,7 +44,16 @@ class MidiMultiPlayer(private val synth: SynthManager) {
 
     /** 특정 tick 위치로 이동 (seek) */
     fun seekTo(tick: Long) {
-        seekToTick = tick.coerceIn(0, totalTicks)
+        val targetTick = tick.coerceIn(0, totalTicks)
+        seekToTick = targetTick
+        
+        // 정지 상태에서도 currentTick을 즉시 업데이트
+        if (!isPlaying) {
+            currentTick = targetTick
+            // 해당 위치의 이벤트 인덱스 찾기
+            currentEventIndex = allEvents.indexOfFirst { it.tick >= targetTick }
+                .takeIf { it >= 0 } ?: allEvents.size
+        }
     }
 
     /** 전체 재생 시작 */
