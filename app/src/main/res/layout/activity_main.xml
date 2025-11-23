@@ -45,6 +45,46 @@
             android:text="Stop All" />
     </LinearLayout>
 
+    <!-- 마디 이동 컨트롤 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingBottom="8dp">
+
+        <Button
+            android:id="@+id/btnPrevMeasure"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="◀ 이전" />
+
+        <TextView
+            android:id="@+id/txtMeasure"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="2"
+            android:gravity="center"
+            android:text="마디: 1 / 1"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnNextMeasure"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="다음 ▶" />
+    </LinearLayout>
+
+    <!-- 마디/재생 진행도 SeekBar -->
+    <SeekBar
+        android:id="@+id/seekBarMeasure"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="0"
+        android:paddingBottom="16dp" />
+
     <!-- BPM 표시 -->
     <TextView
         android:id="@+id/txtBPM"
@@ -56,22 +96,6 @@
     <!-- BPM SeekBar -->
     <SeekBar
         android:id="@+id/seekBarBPM"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="300"
-        android:progress="120" />
-
-    <!-- 마디 표시 -->
-    <TextView
-        android:id="@+id/txtMeasure"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Measure: 0/0"
-        android:paddingBottom="8dp" />
-
-    <!-- 마디 SeekBar -->
-    <SeekBar
-        android:id="@+id/seekBarMeasure"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:max="300"
