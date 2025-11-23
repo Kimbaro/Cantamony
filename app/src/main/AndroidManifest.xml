@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- ✅ 권한 선언부 -->
+    <!-- 인터넷 권한 (서버 업로드용) -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- 오디오 입력 (녹음, 마이크) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" /> <!-- Android 13 미디어 접근용 -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
