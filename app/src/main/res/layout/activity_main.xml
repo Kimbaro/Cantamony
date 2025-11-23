@@ -61,4 +61,20 @@
         android:max="300"
         android:progress="120" />
 
+    <!-- 마디 표시 -->
+    <TextView
+        android:id="@+id/txtMeasure"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Measure: 0/0"
+        android:paddingBottom="8dp" />
+
+    <!-- 마디 SeekBar -->
+    <SeekBar
+        android:id="@+id/seekBarMeasure"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="300"
+        android:progress="120" />
+
 </LinearLayout>
