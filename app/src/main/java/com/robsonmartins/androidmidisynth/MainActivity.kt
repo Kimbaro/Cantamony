@@ -489,38 +489,71 @@ class MainActivity : AppCompatActivity() {
         var previousTick: Long? = null
         
         notesByTick.forEach { (tick, tickEvents) ->
-            // 옥타브 3 이상인 노트만 사용 (트레블 클레프에 적합)
+            // 바이올린 음역대: G3 (MIDI 55) ~ E7 (MIDI 100)
+            // 트레블 클레프에 적합한 범위로 필터링
+            // 범위를 약간 넓혀서 C3 (48) ~ E7 (100)로 설정 (바이올린의 확장 범위 포함)
             val validNotes = tickEvents
-                .filter { it.note >= 48 } // C3 이상 (옥타브 3 이상)
+                .filter { it.note in 48..100 } // 바이올린 확장 음역대 (C3 ~ E7)
                 .map { midiNoteToVexFlowNote(it.note) }
                 .sorted() // 정렬하여 일관성 유지
             
+            Log.d("SheetMusic", "Tick $tick: ${tickEvents.size} events, ${validNotes.size} valid notes after filtering")
+            
             if (validNotes.isNotEmpty()) {
-                // 옥타브 4 이상의 노트만 사용 (트레블 클레프에 적합)
+                // 바이올린은 단선 악기이므로 가장 높은 멜로디 라인 선택
+                // 옥타브 4 이상의 노트를 우선 사용 (바이올린의 일반적인 연주 범위)
                 val trebleNotes = validNotes.filter { 
                     val octave = it.split("/").getOrNull(1)?.toIntOrNull() ?: 0
                     octave >= 4
                 }
                 
-                // 옥타브 4 이상 노트가 없으면 옥타브 3 노트 사용
-                val finalNotes = if (trebleNotes.isNotEmpty()) trebleNotes else validNotes.take(1)
+                // 옥타브 4 이상 노트가 있으면 그것을 사용, 없으면 가장 높은 노트 선택
+                val finalNotes = if (trebleNotes.isNotEmpty()) {
+                    // 가장 높은 노트 선택 (멜로디 라인)
+                    listOf(trebleNotes.maxByOrNull { note ->
+                        val parts = note.split("/")
+                        val octave = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                        val noteName = parts.firstOrNull() ?: ""
+                        octave * 12 + when(noteName.lowercase()) {
+                            "c" -> 0; "c#" -> 1; "d" -> 2; "d#" -> 3; "e" -> 4
+                            "f" -> 5; "f#" -> 6; "g" -> 7; "g#" -> 8; "a" -> 9; "a#" -> 10; "b" -> 11
+                            else -> 0
+                        }
+                    } ?: trebleNotes.first())
+                } else {
+                    // 옥타브 3 노트 중 가장 높은 것 선택
+                    listOf(validNotes.maxByOrNull { note ->
+                        val parts = note.split("/")
+                        val octave = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                        val noteName = parts.firstOrNull() ?: ""
+                        octave * 12 + when(noteName.lowercase()) {
+                            "c" -> 0; "c#" -> 1; "d" -> 2; "d#" -> 3; "e" -> 4
+                            "f" -> 5; "f#" -> 6; "g" -> 7; "g#" -> 8; "a" -> 9; "a#" -> 10; "b" -> 11
+                            else -> 0
+                        }
+                    } ?: validNotes.first())
+                }
                 
                 if (finalNotes.isNotEmpty()) {
                     // duration 계산: 이전 tick과의 차이를 기반으로
                     val prevTick = previousTick
                     val duration = if (prevTick != null && tick > prevTick) {
                         val tickDiff = tick - prevTick
-                        // tick을 duration으로 변환 (480 ticks = quarter note)
+                        // tick을 duration으로 변환 (480 ticks = quarter note, midiResolution 기준)
+                        val resolution = midiResolution.toLong()
                         when {
-                            tickDiff >= 960 -> "h" // half note (2 beats)
-                            tickDiff >= 480 -> "q" // quarter note (1 beat)
-                            tickDiff >= 240 -> "8" // eighth note (0.5 beat)
-                            tickDiff >= 120 -> "16" // sixteenth note (0.25 beat)
-                            else -> "q" // 기본값
+                            tickDiff >= resolution * 2 -> "h" // half note (2 beats)
+                            tickDiff >= resolution -> "q" // quarter note (1 beat)
+                            tickDiff >= resolution / 2 -> "8" // eighth note (0.5 beat)
+                            tickDiff >= resolution / 4 -> "16" // sixteenth note (0.25 beat)
+                            tickDiff >= resolution / 8 -> "32" // thirty-second note (0.125 beat)
+                            else -> "8" // 기본값 (너무 짧으면 eighth note)
                         }
                     } else {
                         "q" // 첫 번째 노트는 기본 quarter note
                     }
+                    
+                    Log.d("SheetMusic", "Tick: $tick, prevTick: $prevTick, duration: $duration")
                     
                     // 첫 번째 노트만 사용 (단일 노트로 표시)
                     chordNotes.add(mapOf(
@@ -535,35 +568,42 @@ class MainActivity : AppCompatActivity() {
         }
         
         Log.d("SheetMusic", "Grouped into ${chordNotes.size} chords from ${noteOnEvents.size} events")
+        if (chordNotes.isEmpty()) {
+            Log.w("SheetMusic", "No valid notes found after filtering! Check note range.")
+        }
 
         val notesJson = if (chordNotes.isEmpty()) {
             Log.w("SheetMusic", "No valid notes found for measure $measure, using placeholder")
             "new VF.StaveNote({ clef: 'treble', keys: ['b/4'], duration: 'w' })"
         } else {
             // 마디 내의 노트들을 시간 순서대로 정렬하여 표시
-            // 모든 노트를 quarter note로 통일하여 간단하게 표시
+            // 계산된 duration 값을 사용하여 다양한 음표 길이 표시
             // 최대 8개 노트만 표시 (한 마디에 적합한 수)
-            chordNotes.take(8).joinToString(",\n                ") { chord ->
+            val notesToRender = chordNotes.take(8)
+            notesToRender.joinToString(",\n                ") { chord ->
                 val keysStr = chord["keys"] as List<String>
+                val duration = chord["duration"] as String  // 계산된 duration 사용
                 // 첫 번째 노트만 사용 (화음이 아닌 단일 노트로)
                 val firstKey = keysStr.firstOrNull() ?: "c/4"
-                "new VF.StaveNote({ clef: 'treble', keys: ['$firstKey'], duration: 'q' })"
+                "new VF.StaveNote({ clef: 'treble', keys: ['$firstKey'], duration: '$duration' })"
             }
         }
         
-        // 총 박자 수 계산 (각 노트의 duration을 합산)
-        val totalBeats = chordNotes.sumOf { chord ->
+        // 렌더링할 노트들의 총 박자 수 계산 (각 노트의 duration을 합산)
+        val notesToRender = chordNotes.take(8)
+        val totalBeats = notesToRender.sumOf { chord ->
             when (chord["duration"] as String) {
                 "w" -> 4.0
                 "h" -> 2.0
                 "q" -> 1.0
                 "8" -> 0.5
                 "16" -> 0.25
+                "32" -> 0.125
                 else -> 1.0
             }
         }
         
-        Log.d("SheetMusic", "Total beats calculated: $totalBeats, time signature: $numerator/$denominator")
+        Log.d("SheetMusic", "Total beats calculated: $totalBeats, time signature: $numerator/$denominator, notes to render: ${notesToRender.size}")
         Log.d("SheetMusic", "Generated notes JSON (first 500 chars): ${notesJson.take(500)}")
         
         // HTML에 totalBeats와 time signature 정보 전달
@@ -606,77 +646,118 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 
-                try {
-                    log('Starting VexFlow rendering...');
-                    var VF = Vex.Flow;
-                    log('VexFlow loaded: ' + (typeof VF !== 'undefined'));
-                    
-                    var div = document.getElementById("sheet");
-                    if (!div) {
-                        logError('Sheet div not found');
-                        throw new Error('Sheet div not found');
-                    }
-                    
-                    var renderer = new VF.Renderer(div, VF.Renderer.Backends.SVG);
-                    renderer.resize(800, 300);
-                    var context = renderer.getContext();
-                    
-                    // Stave 위치 조정 (더 넓은 공간 확보)
-                    var stave = new VF.Stave(10, 50, 750);
-                    stave.addClef("treble").addTimeSignature("$numerator/$denominator");
-                    stave.setContext(context).draw();
-                    log('Stave drawn with time signature: $numerator/$denominator at (10, 50)');
-                    
-                    var notes = [
-                        $notesJson
-                    ];
-                    
-                    log('Total notes to render: ' + notes.length);
-                    
-                    if (notes.length > 0) {
-                        // 시간 서명 정보
-                        var numerator = $numerator;
-                        var denominator = $denominator;
+                var div = document.getElementById("sheet");
+                if (!div) {
+                    logError('Sheet div not found');
+                } else {
+                    try {
+                        log('Starting VexFlow rendering...');
+                        var VF = Vex.Flow;
+                        log('VexFlow loaded: ' + (typeof VF !== 'undefined'));
                         
-                        // 첫 번째 노트 확인
-                        try {
-                            var firstNote = notes[0];
-                            log('First note created: ' + (firstNote ? 'yes' : 'no'));
-                            if (firstNote && firstNote.getKeys) {
-                                var keys = firstNote.getKeys();
-                                log('First note keys: ' + JSON.stringify(keys));
+                        var renderer = new VF.Renderer(div, VF.Renderer.Backends.SVG);
+                        renderer.resize(800, 300);
+                        var context = renderer.getContext();
+                        
+                        // Stave 위치 조정 (더 넓은 공간 확보)
+                        var stave = new VF.Stave(10, 50, 750);
+                        stave.addClef("treble").addTimeSignature("$numerator/$denominator");
+                        stave.setContext(context).draw();
+                        log('Stave drawn with time signature: $numerator/$denominator at (10, 50)');
+                        
+                        var notes = ${if (notesJson.isBlank()) "[]" else "[$notesJson]"}
+                        
+                        log('Total notes to render: ' + notes.length);
+                        
+                        if (notes.length > 0) {
+                            // 시간 서명 정보
+                            var numerator = $numerator;
+                            var denominator = $denominator;
+                            
+                            // 첫 번째 노트 확인
+                            try {
+                                var firstNote = notes[0];
+                                log('First note created: ' + (firstNote ? 'yes' : 'no'));
+                                if (firstNote && firstNote.getKeys) {
+                                    var keys = firstNote.getKeys();
+                                    log('First note keys: ' + JSON.stringify(keys));
+                                }
+                            } catch (e) {
+                                logError('Error checking first note: ' + e.message);
                             }
-                        } catch (e) {
-                            logError('Error checking first note: ' + e.message);
-                        }
-                        
-                        // 마디 단위로 표시: 노트 수에 맞게 Voice 설정
-                        // 모든 노트가 'q' (quarter note)이므로 노트 수 = 박자 수
-                        // "Too many ticks" 오류를 방지하기 위해 노트 수를 그대로 사용
-                        var numBeats = notes.length;
-                        
-                        log('Notes count: ' + notes.length + ', Voice beats: ' + numBeats + ', time signature: ' + numerator + '/' + denominator);
-                        
-                        var voice = new VF.Voice({ num_beats: numBeats, beat_value: denominator });
-                        voice.addTickables(notes);
-                        
-                        log('Voice created with ' + notes.length + ' notes');
-                        
-                        // Formatter 설정: 마디 너비에 맞게 조정
-                        try {
-                            var formatter = new VF.Formatter().joinVoices([voice]).format([voice], 600);
-                            log('Formatter applied with width: 600');
-                        } catch (e) {
-                            logError('Formatter error: ' + e.message);
-                            logError('Stack: ' + e.stack);
-                            // Formatter 실패해도 계속 진행
-                        }
-                        
-                        // 노트 그리기
-                        log('Drawing ' + notes.length + ' notes on stave');
-                        try {
-                            voice.draw(context, stave);
-                            log('Notes drawn successfully');
+                            
+                            // 각 노트의 duration을 분수로 변환하여 계산
+                            // VexFlow는 beat_value (denominator) 기준으로 계산해야 함
+                            var beatAccumulator = 0;
+                            var durationFractionMap = {
+                                'w': 1,      // whole note = 1
+                                'h': 1/2,    // half note = 1/2
+                                'q': 1/4,    // quarter note = 1/4
+                                '8': 1/8,    // eighth note = 1/8
+                                '16': 1/16,  // sixteenth note = 1/16
+                                '32': 1/32   // thirty-second note = 1/32
+                            };
+                            
+                            notes.forEach(function(note) {
+                                try {
+                                    var duration = note.getDuration();
+                                    var fraction = durationFractionMap[duration] || 1/4; // 기본값: quarter note
+                                    beatAccumulator += fraction;
+                                } catch (e) {
+                                    logError('Error getting duration: ' + e.message);
+                                    beatAccumulator += 1/4; // 기본값: quarter note
+                                }
+                            });
+                            
+                            // beat_value (denominator) 기준으로 totalBeats 계산
+                            // 링크의 코드: totalBeats = beatAccumulator / (1 / beatDuration) = beatAccumulator * beatDuration
+                            // beatDuration은 4 (quarter note 기준)로 고정
+                            var beatDuration = 4; // quarter note 기준으로 고정 (링크의 코드와 동일)
+                            var totalBeats = beatAccumulator / (1 / beatDuration);
+                            
+                            // Voice의 박자 수를 정확히 설정
+                            // 링크의 코드에서는 totalBeats를 그대로 사용
+                            // VexFlow는 노트들의 duration 합이 정확히 num_beats와 일치해야 함
+                            // totalBeats를 그대로 사용 (링크의 코드와 동일)
+                            var voiceBeats = totalBeats;
+                            
+                            // 최소값은 시간 서명의 numerator
+                            voiceBeats = Math.max(voiceBeats, numerator);
+                            
+                            log('Notes count: ' + notes.length + ', Beat accumulator: ' + beatAccumulator + ', Total beats: ' + totalBeats + ', Voice beats: ' + voiceBeats + ', time signature: ' + numerator + '/' + denominator);
+                            
+                            // beat_value는 4로 고정 (링크의 코드와 동일)
+                            // totalBeats를 그대로 사용 (링크의 코드와 동일)
+                            var voice = new VF.Voice({ num_beats: voiceBeats, beat_value: beatDuration });
+                            voice.addTickables(notes);
+                            
+                            log('Voice created with ' + notes.length + ' notes');
+                            
+                            // Formatter 설정: 마디 너비에 맞게 조정
+                            var formatterSuccess = false;
+                            try {
+                                var formatter = new VF.Formatter().joinVoices([voice]).format([voice], 600);
+                                log('Formatter applied with width: 600');
+                                formatterSuccess = true;
+                            } catch (e) {
+                                logError('Formatter error: ' + e.message);
+                                logError('Stack: ' + e.stack);
+                                // Formatter 실패 시에도 계속 진행
+                            }
+                            
+                            // 노트 그리기
+                            log('Drawing ' + notes.length + ' notes on stave');
+                            try {
+                                if (formatterSuccess) {
+                                    voice.draw(context, stave);
+                                    log('Notes drawn successfully');
+                                } else {
+                                    logError('Cannot draw without formatter - skipping');
+                                }
+                            } catch (e) {
+                                logError('Draw error: ' + e.message);
+                                logError('Stack: ' + e.stack);
+                            }
                             
                             // 실제로 그려진 노트 확인
                             setTimeout(function() {
@@ -694,12 +775,16 @@ class MainActivity : AppCompatActivity() {
                                     log('Found ' + stems.length + ' stems in SVG');
                                 }
                             }, 200);
-                        } catch (e) {
-                            logError('Draw error: ' + e.message);
-                            logError('Stack: ' + e.stack);
+                        } else {
+                            logError('No notes to render!');
                         }
-                        
-                        // SVG 내용 확인 (디버깅용)
+                    } catch (e) {
+                        logError('Rendering error: ' + e.message);
+                        logError('Stack: ' + e.stack);
+                    }
+                    
+                    // SVG 내용 확인 (디버깅용)
+                    setTimeout(function() {
                         var svgElement = div.querySelector('svg');
                         if (svgElement) {
                             log('SVG element found, width: ' + svgElement.width.baseVal.value + ', height: ' + svgElement.height.baseVal.value);
@@ -712,23 +797,17 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             logError('SVG element not found!');
                         }
-                    } else {
-                        log('No notes to render');
-                    }
+                    }, 300);
                     
                     // 렌더링 완료 알림
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.onRenderComplete) {
-                        AndroidInterface.onRenderComplete();
-                        log('Render complete callback sent');
-                    } else {
-                        logError('AndroidInterface not found');
-                    }
-                } catch (e) {
-                    logError('VexFlow rendering error: ' + e.message);
-                    logError('Stack: ' + e.stack);
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.onRenderComplete) {
-                        AndroidInterface.onRenderComplete();
-                    }
+                    setTimeout(function() {
+                        if (typeof AndroidInterface !== 'undefined' && AndroidInterface.onRenderComplete) {
+                            AndroidInterface.onRenderComplete();
+                            log('Render complete callback sent');
+                        } else {
+                            logError('AndroidInterface not found');
+                        }
+                    }, 500);
                 }
             </script>
         </body>
