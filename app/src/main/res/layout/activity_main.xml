@@ -1,129 +1,301 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#0a0a0a">
 
     <LinearLayout
-        android:id="@+id/mainLayout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:orientation="vertical">
 
-    <!-- 앨범 이름 -->
-    <TextView
-        android:id="@+id/txtAlbumName"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="앨범: "
-        android:textSize="18sp"
-        android:paddingBottom="8dp" />
+        <!-- 상단 영역 (스와이프 감지용) -->
+        <LinearLayout
+            android:id="@+id/swipeArea"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:orientation="horizontal"
+            android:background="#121212"
+            android:padding="16dp"
+            android:gravity="center_vertical">
 
-    <!-- 악보 이미지 표시 -->
-    <ScrollView
+            <!-- 앨범명 (좌측 상단) -->
+            <TextView
+                android:id="@+id/txtAlbumName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="앨범"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="#ffffff" />
+
+            <!-- 스와이프 힌트 아이콘 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="☰"
+                android:textSize="24sp"
+                android:textColor="#b3b3b3"
+                android:padding="8dp" />
+        </LinearLayout>
+
+        <!-- 메인 콘텐츠 -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:fadeScrollbars="false">
+
+            <LinearLayout
+                android:id="@+id/mainLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="0dp">
+
+                <!-- 악보 표시 영역 (중앙, 크게) -->
+                <LinearLayout
+                    android:id="@+id/sheetMusicArea"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp"
+                    android:background="#121212">
+
+                    <ScrollView
+                        android:id="@+id/sheetMusicScrollView"
+                        android:layout_width="match_parent"
+                        android:layout_height="280dp"
+                        android:background="#000000"
+                        android:padding="12dp"
+                        android:fadeScrollbars="false">
+
+                        <ImageView
+                            android:id="@+id/imgSheetMusic"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:adjustViewBounds="true"
+                            android:scaleType="fitCenter"
+                            android:contentDescription="악보"
+                            android:background="#000000"
+                            android:minHeight="260dp" />
+                    </ScrollView>
+                </LinearLayout>
+
+                <!-- 재생 컨트롤 (음악 플레이어 스타일) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="24dp"
+                    android:background="#1a1a1a"
+                    android:layout_marginTop="8dp">
+
+                    <!-- 마디 정보 -->
+                    <TextView
+                        android:id="@+id/txtMeasure"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="마디: 1 / 1"
+                        android:textSize="16sp"
+                        android:textColor="#b3b3b3"
+                        android:layout_marginBottom="16dp" />
+
+                    <!-- 마디 SeekBar -->
+                    <SeekBar
+                        android:id="@+id/seekBarMeasure"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"
+                        android:progress="0"
+                        android:layout_marginBottom="24dp"
+                        android:thumbTint="#1db954"
+                        android:progressTint="#1db954" />
+
+                    <!-- 재생 컨트롤 버튼 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center"
+                        android:layout_marginBottom="16dp">
+
+                        <Button
+                            android:id="@+id/btnPrevMeasure"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:text="⏮"
+                            android:textSize="20sp"
+                            android:backgroundTint="#2a2a2a"
+                            android:layout_marginEnd="16dp"
+                            android:insetLeft="0dp"
+                            android:insetTop="0dp"
+                            android:insetRight="0dp"
+                            android:insetBottom="0dp" />
+
+                        <Button
+                            android:id="@+id/btnPlayAll"
+                            android:layout_width="72dp"
+                            android:layout_height="72dp"
+                            android:text="▶"
+                            android:textSize="32sp"
+                            android:textColor="#000000"
+                            android:backgroundTint="#1db954"
+                            android:layout_marginEnd="16dp"
+                            android:insetLeft="0dp"
+                            android:insetTop="0dp"
+                            android:insetRight="0dp"
+                            android:insetBottom="0dp"
+                            android:elevation="8dp" />
+
+                        <Button
+                            android:id="@+id/btnStopAll"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:text="⏹"
+                            android:textSize="20sp"
+                            android:backgroundTint="#2a2a2a"
+                            android:layout_marginEnd="16dp"
+                            android:insetLeft="0dp"
+                            android:insetTop="0dp"
+                            android:insetRight="0dp"
+                            android:insetBottom="0dp" />
+
+                        <Button
+                            android:id="@+id/btnNextMeasure"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:text="⏭"
+                            android:textSize="20sp"
+                            android:backgroundTint="#2a2a2a"
+                            android:insetLeft="0dp"
+                            android:insetTop="0dp"
+                            android:insetRight="0dp"
+                            android:insetBottom="0dp" />
+                    </LinearLayout>
+
+                    <!-- BPM 컨트롤 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp"
+                        android:background="#2a2a2a"
+                        android:layout_marginTop="8dp">
+
+                        <TextView
+                            android:id="@+id/txtBPM"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="BPM: 120"
+                            android:textSize="18sp"
+                            android:textStyle="bold"
+                            android:textColor="#ffffff"
+                            android:layout_marginBottom="12dp"
+                            android:gravity="center_horizontal"
+                            android:layout_gravity="center_horizontal" />
+
+                        <SeekBar
+                            android:id="@+id/seekBarBPM"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:max="300"
+                            android:progress="120"
+                            android:thumbTint="#1db954"
+                            android:progressTint="#1db954" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 동적 생성될 MID 파일 on/off 버튼 (숨김) -->
+                <LinearLayout
+                    android:id="@+id/buttonContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Top Sheet (위에서 아래로 슬라이드) -->
+    <LinearLayout
+        android:id="@+id/topSheet"
         android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:background="#f5f5f5"
-        android:padding="8dp"
-        android:layout_marginBottom="16dp">
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#1a1a1a"
+        android:elevation="16dp"
+        android:visibility="gone"
+        android:translationY="-2000dp">
 
-        <ImageView
-            android:id="@+id/imgSheetMusic"
+        <!-- 헤더 -->
+        <LinearLayout
+            android:id="@+id/topSheetHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:adjustViewBounds="true"
-            android:scaleType="fitCenter"
-            android:contentDescription="악보"
-            android:background="#ffffff"
-            android:minHeight="150dp" />
-    </ScrollView>
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="center_vertical"
+            android:background="#121212">
 
-    <!-- 동적 생성될 MID 파일 on/off 버튼 -->
-    <LinearLayout
-        android:id="@+id/buttonContainer"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingBottom="16dp" />
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="트랙 목록"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:textColor="#ffffff" />
 
-    <!-- 전체 재생/정지 버튼 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingBottom="16dp">
+            <Button
+                android:id="@+id/btnSelectAll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="전체선택"
+                android:textSize="12sp"
+                android:backgroundTint="#1db954"
+                android:layout_marginEnd="4dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:insetLeft="0dp"
+                android:insetTop="0dp"
+                android:insetRight="0dp"
+                android:insetBottom="0dp" />
 
-        <Button
-            android:id="@+id/btnPlayAll"
-            android:layout_width="0dp"
+            <Button
+                android:id="@+id/btnDeselectAll"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="전체해제"
+                android:textSize="12sp"
+                android:backgroundTint="#535353"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:insetLeft="0dp"
+                android:insetTop="0dp"
+                android:insetRight="0dp"
+                android:insetBottom="0dp" />
+        </LinearLayout>
+
+        <!-- 체크박스 리스트 컨테이너 -->
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/trackScrollView"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Play All" />
+            android:maxHeight="600dp"
+            android:fadeScrollbars="false">
 
-        <Button
-            android:id="@+id/btnStopAll"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Stop All" />
-    </LinearLayout>
-
-    <!-- 마디 이동 컨트롤 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingBottom="8dp">
-
-        <Button
-            android:id="@+id/btnPrevMeasure"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="◀ 이전" />
-
-        <TextView
-            android:id="@+id/txtMeasure"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="2"
-            android:gravity="center"
-            android:text="마디: 1 / 1"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/btnNextMeasure"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="다음 ▶" />
-    </LinearLayout>
-
-    <!-- 마디/재생 진행도 SeekBar -->
-    <SeekBar
-        android:id="@+id/seekBarMeasure"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="100"
-        android:progress="0"
-        android:paddingBottom="16dp" />
-
-    <!-- BPM 표시 -->
-    <TextView
-        android:id="@+id/txtBPM"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="BPM: 120"
-        android:paddingBottom="8dp" />
-
-    <!-- BPM SeekBar -->
-    <SeekBar
-        android:id="@+id/seekBarBPM"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="300"
-        android:progress="120" />
-
+            <LinearLayout
+                android:id="@+id/trackCheckboxContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </androidx.core.widget.NestedScrollView>
     </LinearLayout>
 
     <!-- 워터마크 (대각선 반복) -->

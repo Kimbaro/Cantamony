@@ -10,13 +10,11 @@ import com.robsonmartins.androidmidisynth.dto.MidiAlbum
 class SelectMidiActivity : AppCompatActivity() {
 
     private val albums = listOf(
-        MidiAlbum("학습앨범 1", listOf(
-            "05_ Concerto in a minor, 3rd Movement, Op. 3, No.6.mid",
-            "09_Gavotte from _mignon_.mid"
+        MidiAlbum("안토니오 비발디", listOf(
+            "05_ Concerto in a minor, 3rd Movement, Op. 3, No.6.mid"
         )),
-        MidiAlbum("학습앨범 2", listOf(
-            "example1.mid",
-            "example2.mid"
+        MidiAlbum("앙브루아즈 토마", listOf(
+            "09_Gavotte from _mignon_.mid"
         ))
     )
 

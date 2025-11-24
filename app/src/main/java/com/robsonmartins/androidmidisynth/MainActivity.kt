@@ -5,6 +5,9 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -18,6 +21,7 @@ import com.leff.midi.event.NoteOff
 import com.leff.midi.event.NoteOn
 import com.leff.midi.event.meta.KeySignature
 import com.leff.midi.event.meta.TimeSignature
+import com.leff.midi.event.meta.TrackName
 import com.robsonmartins.androidmidisynth.dto.MidiEvent
 import com.robsonmartins.androidmidisynth.util.MidiMultiPlayer
 import kotlinx.coroutines.*
@@ -42,6 +46,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var txtAlbumName: TextView
     private lateinit var buttonContainer: LinearLayout
+    private lateinit var trackCheckboxContainer: LinearLayout
+    private lateinit var btnSelectAll: Button
+    private lateinit var btnDeselectAll: Button
     private lateinit var btnPlayAll: Button
     private lateinit var btnStopAll: Button
     private lateinit var txtBPM: TextView
@@ -59,6 +66,11 @@ class MainActivity : AppCompatActivity() {
     // 워터마크
     private lateinit var watermarkView: WatermarkView
 
+    // Top Sheet
+    private lateinit var topSheet: View
+    private lateinit var swipeArea: View
+    private var isTopSheetVisible = false
+
     private var initialBPM = 120
 
     // 마디 정보
@@ -70,6 +82,16 @@ class MainActivity : AppCompatActivity() {
 
     // 모든 MIDI 이벤트 저장 (악보 렌더링용)
     private val allMidiEvents = mutableListOf<MidiEvent>()
+
+    // 트랙 정보 저장
+    data class TrackInfo(
+        val globalTrackIndex: Int,  // 전역 트랙 인덱스 (고유)
+        val fileIndex: Int,          // 파일 인덱스
+        val trackIndex: Int,         // 파일 내 트랙 인덱스
+        val trackName: String,       // 트랙 이름
+        val fileName: String         // 파일 이름
+    )
+    private val trackInfoList = mutableListOf<TrackInfo>()
 
     // 서버 업로드 관련
     private val serverUrl = "https://your-server.com/api/upload-sheet-music" // TODO: 실제 서버 URL로 변경
@@ -99,10 +121,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        
+        // 앱바 제거
+        supportActionBar?.hide()
 
         // View 초기화
         txtAlbumName = findViewById(R.id.txtAlbumName)
         buttonContainer = findViewById(R.id.buttonContainer)
+        swipeArea = findViewById(R.id.swipeArea)
+        topSheet = findViewById(R.id.topSheet)
         btnPlayAll = findViewById(R.id.btnPlayAll)
         btnStopAll = findViewById(R.id.btnStopAll)
         txtBPM = findViewById(R.id.txtBPM)
@@ -135,12 +162,13 @@ class MainActivity : AppCompatActivity() {
 
         // MIDI 파일 정보 파싱 및 마디 정보 계산
         var maxTick = 0L
-        for ((index, path) in midiFiles.withIndex()) {
+        var globalTrackIndex = 0
+        for ((fileIndex, path) in midiFiles.withIndex()) {
             assets.open(path).use { inputStream ->
                 val midiFile = MidiFile(inputStream)
 
                 // 첫 번째 파일에서만 TimeSignature, KeySignature와 Resolution 추출
-                if (index == 0) {
+                if (fileIndex == 0) {
                     timeSignature = extractTimeSignature(midiFile)
                     keySignature = extractKeySignature(midiFile)
                     midiResolution = midiFile.getResolution()
@@ -149,14 +177,28 @@ class MainActivity : AppCompatActivity() {
                     ticksPerMeasure = (midiResolution * numerator).toLong()
                 }
 
-                // MidiFile 객체에서 직접 이벤트 파싱
-                val trackEvents = parseMidiFileFromMidiFile(midiFile)
-                trackEvents.forEach { events ->
-                    multiPlayer.addTrack(events, index)
+                // MidiFile 객체에서 직접 이벤트 파싱 (트랙 정보 포함)
+                val trackDataList = parseMidiFileWithTrackInfo(midiFile, fileIndex, path)
+                trackDataList.forEach { (events, trackIndex, trackName) ->
+                    // 전역 트랙 인덱스로 트랙 추가
+                    multiPlayer.addTrack(events, globalTrackIndex)
+                    
+                    // 트랙 정보 저장
+                    trackInfoList.add(
+                        TrackInfo(
+                            globalTrackIndex = globalTrackIndex,
+                            fileIndex = fileIndex,
+                            trackIndex = trackIndex,
+                            trackName = trackName,
+                            fileName = path
+                        )
+                    )
+                    
                     allMidiEvents.addAll(events) // 모든 이벤트 저장
                     events.maxOfOrNull { it.tick }?.let { tick ->
                         if (tick > maxTick) maxTick = tick
                     }
+                    globalTrackIndex++
                 }
             }
         }
@@ -176,18 +218,11 @@ class MainActivity : AppCompatActivity() {
         // 초기 마디 서버 업로드
         onMeasureChanged(1)
 
-        // 트랙별 ON/OFF 버튼 생성
-        midiFiles.forEachIndexed { index, path ->
-            val btn = Button(this).apply {
-                text = "ON ${path}"
-                setOnClickListener {
-                    val currentlyMuted = multiPlayer.getMuteTracks()[index] ?: false
-                    multiPlayer.setMute(index, !currentlyMuted)
-                    text = if (!currentlyMuted) "OFF ${path}" else "ON ${path}"
-                }
-            }
-            buttonContainer.addView(btn)
-        }
+        // Bottom Sheet 초기화
+        setupBottomSheet()
+
+        // 스와이프 제스처 설정 (상단 헤더 + 악보 영역)
+        setupSwipeGesture()
 
         // PLAY ALL
         btnPlayAll.setOnClickListener {
@@ -1780,6 +1815,477 @@ class MainActivity : AppCompatActivity() {
         }
 
         return tracksEvents
+    }
+
+    /** MidiFile 객체에서 트랙 정보와 함께 이벤트 리스트 반환 */
+    private fun parseMidiFileWithTrackInfo(
+        midiFile: MidiFile,
+        fileIndex: Int,
+        fileName: String
+    ): List<Triple<List<MidiEvent>, Int, String>> {
+        val tracksData = mutableListOf<Triple<List<MidiEvent>, Int, String>>()
+
+        for ((trackIndex, track) in midiFile.tracks.withIndex()) {
+            val events = mutableListOf<MidiEvent>()
+            var trackName = "트랙 ${trackIndex + 1}"
+
+            // 트랙 이름 추출
+            for (event in track.events) {
+                if (event is TrackName) {
+                    trackName = event.trackName
+                    break
+                }
+            }
+
+            // NoteOn/NoteOff 이벤트 추출
+            for (event in track.events) {
+                when (event) {
+                    is NoteOn -> events.add(
+                        MidiEvent(
+                            event.tick.toLong(),
+                            event.noteValue,
+                            event.velocity,
+                            true,
+                            trackIndex
+                        )
+                    )
+
+                    is NoteOff -> events.add(
+                        MidiEvent(
+                            event.tick.toLong(),
+                            event.noteValue,
+                            event.velocity,
+                            false,
+                            trackIndex
+                        )
+                    )
+                }
+            }
+
+            // 이벤트가 있는 트랙만 추가
+            if (events.isNotEmpty()) {
+                tracksData.add(Triple(events, trackIndex, trackName))
+            }
+        }
+
+        return tracksData
+    }
+
+    /** 트랙 체크박스 리스트 생성 */
+    private fun createTrackCheckboxes() {
+        trackCheckboxContainer.removeAllViews()
+
+        trackInfoList.forEachIndexed { index, trackInfo ->
+            // 트랙 아이템 컨테이너 (음악 앱 스타일)
+            val container = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(16, 16, 16, 16)
+                setBackgroundColor(if (index % 2 == 0) 0xFF1a1a1a.toInt() else 0xFF121212.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+
+            // 트랙 번호 표시
+            val trackNumber = TextView(this).apply {
+                text = "${index + 1}"
+                textSize = 14f
+                setTextColor(0xFFb3b3b3.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    marginEnd = 16
+                    width = 40
+                }
+                gravity = android.view.Gravity.CENTER
+            }
+
+            // 트랙 정보 텍스트
+            val trackInfoText = TextView(this).apply {
+                text = trackInfo.trackName
+                textSize = 16f
+                setTextColor(0xFFffffff.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
+            }
+
+            val fileNameText = TextView(this).apply {
+                text = trackInfo.fileName
+                textSize = 12f
+                setTextColor(0xFFb3b3b3.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+
+            val textContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
+            }
+            textContainer.addView(trackInfoText)
+            textContainer.addView(fileNameText)
+
+            // 체크박스 (음악 앱 스타일)
+            val checkbox = android.widget.CheckBox(this).apply {
+                isChecked = true // 기본적으로 모두 선택
+                buttonTintList = android.content.res.ColorStateList.valueOf(0xFF1db954.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    marginStart = 16
+                }
+
+                setOnCheckedChangeListener { _, isChecked ->
+                    multiPlayer.setMute(trackInfo.globalTrackIndex, !isChecked)
+                    // 체크 상태에 따라 텍스트 색상 변경
+                    trackInfoText.setTextColor(if (isChecked) 0xFFffffff.toInt() else 0xFF535353.toInt())
+                    fileNameText.setTextColor(if (isChecked) 0xFFb3b3b3.toInt() else 0xFF404040.toInt())
+                }
+            }
+            
+            container.addView(trackNumber)
+            container.addView(textContainer)
+            container.addView(checkbox)
+            trackCheckboxContainer.addView(container)
+        }
+    }
+
+    /** 전체선택/전체해제 */
+    private fun selectAllTracks(select: Boolean) {
+        for (i in 0 until trackCheckboxContainer.childCount) {
+            val container = trackCheckboxContainer.getChildAt(i) as? LinearLayout
+            // 체크박스는 마지막 자식 요소
+            val checkbox = container?.getChildAt(container.childCount - 1) as? android.widget.CheckBox
+            checkbox?.isChecked = select
+        }
+    }
+
+    /** Top Sheet 설정 */
+    private fun setupBottomSheet() {
+        // Top Sheet의 컨테이너와 버튼 참조
+        trackCheckboxContainer = findViewById(R.id.trackCheckboxContainer)
+        btnSelectAll = findViewById(R.id.btnSelectAll)
+        btnDeselectAll = findViewById(R.id.btnDeselectAll)
+
+        // 트랙 체크박스 리스트 생성
+        createTrackCheckboxes()
+
+        // 전체선택/전체해제 버튼 리스너
+        btnSelectAll.setOnClickListener {
+            selectAllTracks(true)
+        }
+        btnDeselectAll.setOnClickListener {
+            selectAllTracks(false)
+        }
+
+        // 헤더 영역에서 위로 스와이프 감지 (스크롤뷰와의 충돌 방지)
+        val headerLayout = findViewById<LinearLayout>(R.id.topSheetHeader)
+        setupHeaderSwipeGesture(headerLayout)
+        
+        // Top Sheet 전체에서도 위로 스와이프 감지
+        setupTopSheetSwipeGesture()
+    }
+    
+    /** 헤더 영역에서 위로 스와이프하여 닫기 */
+    private fun setupHeaderSwipeGesture(header: View) {
+        var startY = 0f
+        var initialTranslationY = 0f
+        var isSwiping = false
+        
+        header.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startY = event.y
+                    initialTranslationY = topSheet.translationY
+                    isSwiping = false
+                    // 터치 이벤트를 캡처
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaY = event.y - startY
+                    
+                    // 위로 스와이프 감지 (음수 deltaY = 위로)
+                    if (deltaY < -20) {
+                        if (!isSwiping) {
+                            isSwiping = true
+                            Log.d("TopSheet", "Swipe started: deltaY=$deltaY")
+                        }
+                        
+                        // Top Sheet를 위로 이동
+                        val newY = initialTranslationY + deltaY
+                        if (newY <= 0) {
+                            topSheet.translationY = newY.coerceAtLeast(-topSheet.height.toFloat())
+                        }
+                        // 터치 이벤트를 계속 캡처
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                        true
+                    } else {
+                        // 아래로 스와이프는 무시
+                        false
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                    
+                    if (isSwiping) {
+                        val deltaY = event.y - startY
+                        val currentY = topSheet.translationY
+                        val threshold = -topSheet.height * 0.25f
+                        
+                        Log.d("TopSheet", "Swipe ended: deltaY=$deltaY, currentY=$currentY, threshold=$threshold")
+                        
+                        // 위로 충분히 스와이프했으면 닫기
+                        if (deltaY < -50 || currentY < threshold) {
+                            Log.d("TopSheet", "Closing Top Sheet")
+                            hideTopSheet()
+                        } else {
+                            // 원래 위치로 복귀
+                            Log.d("TopSheet", "Returning to original position")
+                            val animator = android.animation.ObjectAnimator.ofFloat(
+                                topSheet,
+                                "translationY",
+                                currentY,
+                                0f
+                            )
+                            animator.duration = 200
+                            animator.start()
+                        }
+                        isSwiping = false
+                        true
+                    } else {
+                        false
+                    }
+                }
+                else -> false
+            }
+        }
+    }
+
+    /** 스와이프 제스처 설정 (상단 헤더 + 악보 영역에서 아래로 스와이프하여 Top Sheet 열기) */
+    private fun setupSwipeGesture() {
+        // 상단 헤더 영역 스와이프 감지
+        setupSwipeAreaGesture(swipeArea, true)
+        
+        // 악보 영역 스와이프 감지
+        val sheetMusicArea = findViewById<LinearLayout>(R.id.sheetMusicArea)
+        val sheetMusicScrollView = findViewById<android.widget.ScrollView>(R.id.sheetMusicScrollView)
+        setupSwipeAreaGesture(sheetMusicArea, false)
+        sheetMusicScrollView?.let { setupSwipeAreaGestureForScrollView(it) }
+    }
+    
+    /** 특정 영역에서 아래로 스와이프하여 Top Sheet 열기 */
+    private fun setupSwipeAreaGesture(view: View, allowClick: Boolean) {
+        var startY = 0f
+        
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startY = event.y
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    // 클릭으로도 Top Sheet 열기 (헤더 영역만)
+                    if (allowClick) {
+                        showTopSheet()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaY = event.y - startY
+                    // 아래로 스와이프 (위에서 시작하여 아래로)
+                    if (deltaY > 100) {
+                        showTopSheet()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                else -> false
+            }
+        }
+    }
+    
+    /** ScrollView 영역에서 아래로 스와이프하여 Top Sheet 열기 (스크롤과 충돌 방지) */
+    private fun setupSwipeAreaGestureForScrollView(scrollView: android.widget.ScrollView) {
+        var startY = 0f
+        
+        scrollView.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startY = event.y
+                    false // ScrollView가 터치 이벤트를 처리하도록
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaY = event.y - startY
+                    // ScrollView가 최상단에 있고, 아래로 스와이프할 때만 Top Sheet 열기
+                    if (scrollView.scrollY == 0 && deltaY > 100) {
+                        showTopSheet()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                else -> false
+            }
+        }
+    }
+
+    /** Top Sheet에서 위로 스와이프하여 닫기 (스크롤뷰 영역 포함) */
+    private fun setupTopSheetSwipeGesture() {
+        // 스크롤뷰를 찾아서 스와이프 감지 추가
+        val scrollView = topSheet.findViewById<androidx.core.widget.NestedScrollView>(R.id.trackScrollView)
+        
+        scrollView?.let { sv ->
+            var startY = 0f
+            var initialTranslationY = 0f
+            var isSwiping = false
+            
+            sv.setOnTouchListener { view, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        // 스크롤뷰가 최상단에 있을 때만 스와이프 감지
+                        if (sv.scrollY == 0) {
+                            startY = event.y
+                            initialTranslationY = topSheet.translationY
+                            isSwiping = false
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (sv.scrollY == 0 && startY > 0) {
+                            val deltaY = event.y - startY
+                            
+                            // 위로 스와이프 감지 (음수 deltaY = 위로)
+                            if (deltaY < -20) {
+                                if (!isSwiping) {
+                                    isSwiping = true
+                                    // 스크롤뷰 스크롤 방지
+                                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                                }
+                                
+                                // Top Sheet를 위로 이동
+                                val newY = initialTranslationY + deltaY
+                                if (newY <= 0) {
+                                    topSheet.translationY = newY.coerceAtLeast(-topSheet.height.toFloat())
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
+                        
+                        if (isSwiping) {
+                            val deltaY = event.y - startY
+                            val currentY = topSheet.translationY
+                            val threshold = -topSheet.height * 0.25f
+                            
+                            // 위로 충분히 스와이프했으면 닫기
+                            if (deltaY < -50 || currentY < threshold) {
+                                hideTopSheet()
+                            } else {
+                                // 원래 위치로 복귀
+                                val animator = android.animation.ObjectAnimator.ofFloat(
+                                    topSheet,
+                                    "translationY",
+                                    currentY,
+                                    0f
+                                )
+                                animator.duration = 200
+                                animator.start()
+                            }
+                            isSwiping = false
+                            startY = 0f
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    else -> false
+                }
+            }
+        }
+    }
+
+    /** Top Sheet 표시 */
+    private fun showTopSheet() {
+        if (isTopSheetVisible) return
+        
+        isTopSheetVisible = true
+        topSheet.visibility = View.VISIBLE
+        
+        // View가 측정되기를 기다린 후 애니메이션 시작
+        topSheet.post {
+            val height = topSheet.height
+            if (height > 0) {
+                topSheet.translationY = -height.toFloat()
+                // 위에서 아래로 슬라이드 애니메이션
+                val animator = android.animation.ObjectAnimator.ofFloat(
+                    topSheet,
+                    "translationY",
+                    -height.toFloat(),
+                    0f
+                )
+                animator.duration = 300
+                animator.start()
+            } else {
+                // 높이가 측정되지 않은 경우 기본값 사용
+                topSheet.translationY = -1000f
+                val animator = android.animation.ObjectAnimator.ofFloat(
+                    topSheet,
+                    "translationY",
+                    -1000f,
+                    0f
+                )
+                animator.duration = 300
+                animator.start()
+            }
+        }
+    }
+
+    /** Top Sheet 숨김 */
+    private fun hideTopSheet() {
+        if (!isTopSheetVisible) return
+        
+        val currentY = topSheet.translationY
+        val targetY = -topSheet.height.toFloat()
+        
+        // 아래에서 위로 슬라이드 애니메이션
+        val animator = android.animation.ObjectAnimator.ofFloat(
+            topSheet,
+            "translationY",
+            currentY,
+            if (targetY < -500) -1000f else targetY
+        )
+        animator.duration = 300
+        animator.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) {
+                topSheet.visibility = View.GONE
+                isTopSheetVisible = false
+            }
+        })
+        animator.start()
     }
 
 }
