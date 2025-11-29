@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.android)
+    kotlin("kapt")
+    id("com.google.devtools.ksp") version "1.9.24-1.0.20" // 추가
 }
 
 android {
@@ -38,6 +40,14 @@ android {
             path("src/main/cpp/CMakeLists.txt")
         }
     }
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1,LICENSE.md,LICENSE-notice.md,NOTICE.md}"
+            // JAXB 라이브러리에서 중복되는 META-INF 파일 제외
+            excludes += "/META-INF/LICENSE.txt"
+            excludes += "/META-INF/NOTICE.txt"
+        }
+    }
 }
 
 dependencies {
@@ -50,4 +60,17 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
+
+    // TikXML 의존성 (MusicXML-Android 라이브러리용)
+    implementation("com.tickaroo.tikxml:annotation:0.8.13")
+    implementation("com.tickaroo.tikxml:core:0.8.13")
+    implementation("com.tickaroo.tikxml:retrofit-converter:0.8.13")
+    kapt("com.tickaroo.tikxml:processor:0.8.13")
+    
+    // Okio (TikXML이 의존)
+    implementation("com.squareup.okio:okio:3.2.0")
+    
+    // Room (KSP 사용)
+    ksp(libs.room.compiler)
 }
+

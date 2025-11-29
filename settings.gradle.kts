@@ -11,6 +11,8 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+// settings.gradle.kts
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -21,4 +23,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "Cantamony(Cantabile Project, Alpha)"
 include(":app")
- 

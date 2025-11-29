@@ -5,11 +5,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.robsonmartins.androidmidisynth.dto.MidiAlbum
+import com.robsonmartins.androidmidisynth.dto.CantamonyAlbum
 
 class AlbumAdapter(
-    private val albums: List<MidiAlbum>,
-    private val onAlbumClick: (MidiAlbum) -> Unit
+    private val albums: List<CantamonyAlbum>,
+    private val onAlbumClick: (CantamonyAlbum) -> Unit
 ) : RecyclerView.Adapter<AlbumAdapter.AlbumViewHolder>() {
 
     inner class AlbumViewHolder(view: View) : RecyclerView.ViewHolder(view) {
