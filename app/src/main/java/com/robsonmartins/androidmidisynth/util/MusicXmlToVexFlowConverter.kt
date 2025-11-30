@@ -11,6 +11,14 @@ object MusicXmlToVexFlowConverter {
     private const val TAG = "MusicXmlToVexFlow"
 
     /**
+     * 연주기호 데이터 클래스
+     */
+    data class ArticulationData(
+        val type: String,  // "staccato", "accent", "tenuto", "fermata", "marcato", "staccatissimo"
+        val placement: String? = null // "above" or "below"
+    )
+
+    /**
      * VexFlow 노트 데이터 클래스
      */
     data class VexFlowNote(
@@ -18,7 +26,7 @@ object MusicXmlToVexFlowConverter {
         val duration: String,         // 예: "w", "h", "q", "8", "16", "32"
         val isRest: Boolean = false,  // 쉼표 여부
         val isChord: Boolean = false,  // 화음 여부 (chord 태그)
-        val articulations: List<String> = emptyList(),  // 연주기호: ["staccato", "accent", "tenuto", "fermata", "trill"]
+        val articulations: List<ArticulationData> = emptyList(),  // 연주기호: ArticulationData 객체 배열
         val tieType: String? = null,  // 붙임줄: "start", "stop", "continue"
         val slurType: String? = null, // 슬러: "start", "stop", "continue"
         val beamType: String? = null,  // 음표 연결: "begin", "continue", "end"
@@ -93,14 +101,12 @@ object MusicXmlToVexFlowConverter {
         }
         
         // 기호 정보를 JavaScript 객체에 포함
+        // VF.StaveNote 생성자는 articulations를 받지 않으므로, IIFE로 감싸서 note.articulations 속성을 설정
         val noteObj = buildString {
-            append("new VF.StaveNote({ clef: '$clef', keys: [$keysStr], duration: '$duration'")
+            append("(function() {")
+            append("var note = new VF.StaveNote({ clef: '$clef', keys: [$keysStr], duration: '$duration'")
             
-            // 기호 정보 추가
-            if (note.articulations.isNotEmpty()) {
-                val articulationsStr = note.articulations.joinToString(", ") { "'$it'" }
-                append(", articulations: [$articulationsStr]")
-            }
+            // 기호 정보 추가 (articulations 제외)
             if (note.tieType != null) {
                 append(", tieType: '${note.tieType}'")
             }
@@ -123,7 +129,22 @@ object MusicXmlToVexFlowConverter {
                 append(", noteId: '${note.noteId}'")
             }
             
-            append(" })")
+            append(" });")
+            
+            // articulations를 note 객체에 직접 설정 (ArticulationData 객체 배열)
+            if (note.articulations.isNotEmpty()) {
+                val articulationsStr = note.articulations.joinToString(", ") { art ->
+                    if (art.placement != null) {
+                        "{type: '${art.type}', placement: '${art.placement}'}"
+                    } else {
+                        "{type: '${art.type}'}"
+                    }
+                }
+                append("note.articulations = [$articulationsStr];")
+            }
+            
+            append("return note;")
+            append("})()")
         }
         
         return noteObj

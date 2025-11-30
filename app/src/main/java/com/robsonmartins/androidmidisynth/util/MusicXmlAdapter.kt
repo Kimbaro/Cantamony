@@ -490,18 +490,67 @@ object MusicXmlAdapter {
     /**
      * 연주기호 추출
      */
-    private fun extractArticulations(note: Note): List<String> {
-        val articulations = mutableListOf<String>()
-        
-        note.notations?.articulations?.let { arts ->
-            // Staccato
-            if (arts.staccato != null) {
-                articulations.add("staccato")
-            }
-            // TODO: 다른 연주기호 추가 (accent, tenuto, fermata, trill 등)
-            // 현재 Articulations 모델에는 staccato만 있음
+    private fun extractArticulations(note: Note): List<MusicXmlToVexFlowConverter.ArticulationData> {
+        val articulations = mutableListOf<MusicXmlToVexFlowConverter.ArticulationData>()
+
+        if (note.notations == null) {
+            Log.d("loopKDY", "Note.notations is null")
+            return articulations
         }
         
+        if (note.notations.articulations == null) {
+            Log.d("loopKDY", "Note.notations.articulations is null")
+            return articulations
+        }
+
+        note.notations.articulations?.let { arts ->
+            // Staccato
+            arts.staccato?.let { staccato ->
+                Log.d("loopKDY", "Found staccato articulation: $staccato")
+                articulations.add(
+                    MusicXmlToVexFlowConverter.ArticulationData(
+                        type = "staccato",
+                        placement = staccato.placement
+                    )
+                )
+            }
+            // Accent
+            arts.accent?.let { accent ->
+                articulations.add(
+                    MusicXmlToVexFlowConverter.ArticulationData(
+                        type = "accent",
+                        placement = accent.placement
+                    )
+                )
+            }
+            // Tenuto
+            arts.tenuto?.let { tenuto ->
+                articulations.add(
+                    MusicXmlToVexFlowConverter.ArticulationData(
+                        type = "tenuto",
+                        placement = tenuto.placement
+                    )
+                )
+            }
+            // Marcato
+            arts.marcato?.let { marcato ->
+                articulations.add(
+                    MusicXmlToVexFlowConverter.ArticulationData(
+                        type = "marcato",
+                        placement = marcato.placement
+                    )
+                )
+            }
+            // Staccatissimo
+            arts.staccatissimo?.let { staccatissimo ->
+                articulations.add(
+                    MusicXmlToVexFlowConverter.ArticulationData(
+                        type = "staccatissimo",
+                        placement = staccatissimo.placement
+                    )
+                )
+            }
+        }
         return articulations
     }
     

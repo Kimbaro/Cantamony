@@ -414,24 +414,24 @@ class MainActivity : AppCompatActivity() {
             }
         } else if (musicxmlFilePath != null) {
             Log.d("MainActivity", "MusicXML file path received: $musicxmlFilePath")
-            
+
             try {
                 // assets에서 직접 MusicXML 파일 읽기 (.musicxml는 압축되지 않음)
                 val musicXmlString = MusicXmlUtils.readMusicXmlFile(assets, musicxmlFilePath)
-                
+
                 if (musicXmlString != null && musicXmlString.isNotEmpty()) {
                     Log.d(
                         "MainActivity",
                         "MusicXML content read, length: ${musicXmlString.length}"
                     )
-                    
+
                     // ScorePartWise로 직접 파싱
                     val parsedScorePartWise = Parser.parseString(musicXmlString)
-                    
+
                     if (parsedScorePartWise != null) {
                         scorePartWise = parsedScorePartWise
                         hasMusicXml = true
-                        
+
                         // 마디 수 계산
                         val parts = parsedScorePartWise.parts
                         if (parts != null && parts.isNotEmpty()) {
@@ -450,9 +450,10 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             Log.w("MainActivity", "ScorePartWise parsed but no parts found")
                         }
-                        
+
                         // MusicXmlAdapter를 사용하여 MeasureData로 변환
-                        musicXmlMeasures = MusicXmlAdapter.convertScorePartWiseToMeasureData(parsedScorePartWise)
+                        musicXmlMeasures =
+                            MusicXmlAdapter.convertScorePartWiseToMeasureData(parsedScorePartWise)
                         if (hasMusicXml) {
                             totalMeasures = musicXmlMeasures.size
                             Log.d(
@@ -466,7 +467,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     Log.w("MainActivity", "Failed to read MusicXML content from: $musicxmlFilePath")
                 }
-                
+
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to parse MusicXML file: $musicxmlFilePath", e)
                 e.printStackTrace()
@@ -1180,6 +1181,222 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    /** 공통 JavaScript 유틸리티 함수 */
+    private fun getCommonJavaScriptUtils(): String {
+        return """
+        <script>
+            // 로그 함수
+            function log(msg) {
+                if (typeof AndroidInterface !== 'undefined' && AndroidInterface.log) {
+                    AndroidInterface.log(msg);
+                } else {
+                    console.log(msg);
+                }
+            }
+            
+            function logError(msg) {
+                if (typeof AndroidInterface !== 'undefined' && AndroidInterface.logError) {
+                    AndroidInterface.logError(msg);
+                } else {
+                    console.error(msg);
+                }
+            }
+            
+            // VexFlow 로드 함수
+            function loadVexFlow() {
+                return new Promise(function(resolve, reject) {
+                    if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
+                        resolve(Vex.Flow);
+                        return;
+                    }
+                    var script = document.createElement('script');
+                    script.src = 'vexflow/vexflow-min.js';
+                    script.onload = function() {
+                        if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
+                            log('VexFlow loaded from local assets');
+                            resolve(Vex.Flow);
+                        } else {
+                            loadVexFlowFromCDN().then(resolve).catch(reject);
+                        }
+                    };
+                    script.onerror = function() {
+                        log('Local VexFlow load failed, trying CDN...');
+                        loadVexFlowFromCDN().then(resolve).catch(reject);
+                    };
+                    document.head.appendChild(script);
+                });
+            }
+            
+            function loadVexFlowFromCDN() {
+                return new Promise(function(resolve, reject) {
+                    var script = document.createElement('script');
+                    script.src = 'https://cdn.jsdelivr.net/npm/vexflow@4.2.5/releases/vexflow-min.js';
+                    script.onload = function() {
+                        if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
+                            log('VexFlow loaded from CDN');
+                            resolve(Vex.Flow);
+                        } else {
+                            reject(new Error('VexFlow not available after CDN load'));
+                        }
+                    };
+                    script.onerror = function() {
+                        reject(new Error('Failed to load VexFlow from CDN'));
+                    };
+                    document.head.appendChild(script);
+                });
+            }
+            
+            // 점음표 헬퍼 함수
+            function dotted(staveNote, noteIndex) {
+                var VF = window.VF || (typeof VF !== 'undefined' ? VF : null);
+                if (!VF) return staveNote;
+                if (noteIndex === undefined || noteIndex < 0) {
+                    VF.Dot.buildAndAttach([staveNote], { all: true });
+                } else {
+                    VF.Dot.buildAndAttach([staveNote], { index: noteIndex });
+                }
+                return staveNote;
+            }
+            
+            // Duration을 beats로 변환하는 맵
+            var durationFractionMap = {
+                'w': 4, 'wr': 4, 'h': 2, 'hr': 2,
+                'q': 1, 'qr': 1, '8': 0.5, '8r': 0.5,
+                '16': 0.25, '16r': 0.25, '32': 0.125, '32r': 0.125
+            };
+            
+            // 노트에 Accidental 추가
+            function addAccidentalsToNote(note) {
+                var VF = window.VF || (typeof VF !== 'undefined' ? VF : null);
+                if (!VF || !(note instanceof VF.StaveNote)) return;
+                var keys = note.getKeys();
+                if (!keys || keys.length === 0) return;
+                
+                keys.forEach(function(key, keyIndex) {
+                    try {
+                        var accidental = null;
+                        if (key.includes('##')) {
+                            accidental = new VF.Accidental('##');
+                        } else if (key.includes('bb')) {
+                            accidental = new VF.Accidental('bb');
+                        } else if (key.includes('#')) {
+                            accidental = new VF.Accidental('#');
+                        } else if (key.includes('b') && !key.includes('bb')) {
+                            var noteName = key.split('/')[0].toLowerCase();
+                            if (noteName.endsWith('b') && !noteName.endsWith('bb')) {
+                                accidental = new VF.Accidental('b');
+                            }
+                        }
+                        if (accidental) {
+                            note.addModifier(accidental, keyIndex);
+                        }
+                    } catch (e) {
+                        logError('Error adding accidental: ' + e.message);
+                    }
+                });
+            }
+            
+            // 노트에 Articulation 추가
+            function addArticulationsToNote(note) {
+                var VF = window.VF || (typeof VF !== 'undefined' ? VF : null);
+                if (!VF || !(note instanceof VF.StaveNote)) return;
+                if (!note.articulations || !Array.isArray(note.articulations)) return;
+                
+                note.articulations.forEach(function(articulationData, index) {
+                    try {
+                        var type = null;
+                        var placement = null;
+                        
+                        if (typeof articulationData === 'string') {
+                            type = articulationData;
+                        } else if (articulationData && articulationData.type) {
+                            type = articulationData.type;
+                            placement = articulationData.placement;
+                        } else {
+                            return;
+                        }
+                        
+                        var articulation = null;
+                        switch(type) {
+                            case 'staccato': articulation = new VF.Articulation('a.'); break;
+                            case 'accent': articulation = new VF.Articulation('a>'); break;
+                            case 'tenuto': articulation = new VF.Articulation('a-'); break;
+                            case 'fermata': articulation = new VF.Articulation('am'); break;
+                            case 'marcato': articulation = new VF.Articulation('a^'); break;
+                            case 'staccatissimo': articulation = new VF.Articulation('av'); break;
+                        }
+                        
+                        if (articulation) {
+                            var position = (placement === 'below') ? VF.Annotation.Position.BELOW : VF.Annotation.Position.ABOVE;
+                           
+                            // 🔑 악센트 전용 충돌 우회 로직 - addArticulation 이후에 호출
+                            if (type === 'accent') {
+                                // addArticulation 이후에 setYShift 호출
+                                if (position === VF.Annotation.Position.ABOVE) {
+                                    articulation.setYShift(-5);
+                                    log('Applied setYShift to accent above');
+                                } else if (position === VF.Annotation.Position.BELOW) {
+                                    articulation.setYShift(5);
+                                    log('Applied setYShift to accent below');
+                                }
+                            }
+                            // 먼저 position 설정
+                            articulation.setPosition(position);
+                            
+                            // addArticulation을 먼저 호출
+                            note.addArticulation(index, articulation);
+                        }
+                    } catch (e) {
+                        logError('Error adding articulation: ' + e.message);
+                    }
+                });
+            }
+            
+            // 노트에 Dot 추가
+            function addDotsToNote(note) {
+                var VF = window.VF || (typeof VF !== 'undefined' ? VF : null);
+                if (!VF || !(note instanceof VF.StaveNote)) return;
+                try {
+                    var duration = note.getDuration();
+                    if (duration && duration.includes('d')) {
+                        dotted(note);
+                    }
+                } catch (e) {
+                    logError('Error adding dot: ' + e.message);
+                }
+            }
+            
+            // 노트 처리 (Accidental, Dot, Articulation 모두 적용)
+            function processNote(note) {
+                log('loopKDT -> processNote called, note type: ' + typeof note);
+                
+                // window.VF 또는 VF 사용 (전역 변수로 설정된 VF)
+                var VF = window.VF || (typeof VF !== 'undefined' ? VF : null);
+                
+                // VF가 로드되지 않았거나 note가 아직 생성되지 않은 경우
+                if (!VF || typeof VF.StaveNote === 'undefined') {
+                    logError('loopKDT -> VF or VF.StaveNote is not defined');
+                    return;
+                }
+                if (!note) {
+                    logError('loopKDT -> note is null or undefined');
+                    return;
+                }
+                if (!(note instanceof VF.StaveNote)) {
+                    logError('loopKDT -> note is not VF.StaveNote instance. note type: ' + typeof note + ', constructor: ' + (note.constructor ? note.constructor.name : 'null'));
+                    return;
+                }
+                log('loopKDT -> addAccidentalsToNote');
+                addAccidentalsToNote(note);
+                log('loopKDT -> addDotsToNote');
+                addDotsToNote(note);
+                log('loopKDT -> addArticulationsToNote');
+                addArticulationsToNote(note);
+            }
+        </script>
+        """.trimIndent()
+    }
+
     /** 빈 악보 HTML 생성 */
     private fun generateEmptySheetMusicHTML(): String {
         return """
@@ -1190,18 +1407,11 @@ class MainActivity : AppCompatActivity() {
                 body { margin: 0; padding: 0; background: white; }
                 #sheet { width: 100%; height: 100%; }
             </style>
+            ${getCommonJavaScriptUtils()}
         </head>
         <body>
             <div id="sheet"></div>
             <script>
-                function log(msg) {
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.log) {
-                        AndroidInterface.log(msg);
-                    } else {
-                        console.log(msg);
-                    }
-                }
-                
                 loadVexFlow().then(function(VF) {
                     var div = document.getElementById("sheet");
                     if (div) {
@@ -1326,77 +1536,11 @@ class MainActivity : AppCompatActivity() {
                     display: block;
                 }
             </style>
-            <script>
-                // VexFlow 로드 함수 (로컬 우선, 실패 시 CDN)
-                function loadVexFlow() {
-                    return new Promise(function(resolve, reject) {
-                        // 이미 로드되어 있는지 확인
-                        if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
-                            resolve(Vex.Flow);
-                            return;
-                        }
-                        
-                        // 로컬 assets에서 먼저 시도
-                        var script = document.createElement('script');
-                        script.src = 'vexflow/vexflow-min.js';
-                        script.onload = function() {
-                            if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
-                                log('VexFlow loaded from local assets');
-                                resolve(Vex.Flow);
-                            } else {
-                                // 로컬 로드 실패 시 CDN 사용
-                                loadVexFlowFromCDN().then(resolve).catch(reject);
-                            }
-                        };
-                        script.onerror = function() {
-                            // 로컬 로드 실패 시 CDN 사용
-                            log('Local VexFlow load failed, trying CDN...');
-                            loadVexFlowFromCDN().then(resolve).catch(reject);
-                        };
-                        document.head.appendChild(script);
-                    });
-                }
-                
-                function loadVexFlowFromCDN() {
-                    return new Promise(function(resolve, reject) {
-                        var script = document.createElement('script');
-                        script.src = 'https://cdn.jsdelivr.net/npm/vexflow@4.2.5/releases/vexflow-min.js';
-                        script.onload = function() {
-                            if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
-                                log('VexFlow loaded from CDN');
-                                resolve(Vex.Flow);
-                            } else {
-                                reject(new Error('VexFlow not available after CDN load'));
-                            }
-                        };
-                        script.onerror = function() {
-                            reject(new Error('Failed to load VexFlow from CDN'));
-                        };
-                        document.head.appendChild(script);
-                    });
-                }
-            </script>
+            ${getCommonJavaScriptUtils()}
         </head>
         <body>
             <div id="sheet"></div>
             <script>
-                // 로그 함수
-                function log(msg) {
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.log) {
-                        AndroidInterface.log(msg);
-                    } else {
-                        console.log(msg);
-                    }
-                }
-                
-                function logError(msg) {
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.logError) {
-                        AndroidInterface.logError(msg);
-                    } else {
-                        console.error(msg);
-                    }
-                }
-                
                 function startRendering() {
                     var div = document.getElementById("sheet");
                     if (!div) {
@@ -1417,6 +1561,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 function renderSheetMusic(VF, div) {
+                    // VF를 전역 변수로 설정하여 processNote 등에서 접근 가능하도록 함
+                    window.VF = VF;
+                    
                     try {
                         log('Starting VexFlow rendering for two staves...');
                         
@@ -1452,24 +1599,6 @@ class MainActivity : AppCompatActivity() {
                         log('Key signature value received: "' + keySignatureValue + '" (length: ' + keySignatureValue.length + ')');
                         log('Key signature type: ' + typeof keySignatureValue);
                         log('Measures per line: ' + measuresPerLine + ', measure width: ' + measureWidth + ', stave width: ' + staveWidth);
-                        
-                        // 점음표를 위한 헬퍼 함수 (규칙 파일 참조)
-                        function dotted(staveNote, noteIndex = -1) {
-                            if (noteIndex < 0) {
-                                VF.Dot.buildAndAttach([staveNote], { all: true });
-                            } else {
-                                VF.Dot.buildAndAttach([staveNote], { index: noteIndex });
-                            }
-                            return staveNote;
-                        }
-                        
-                        // VexFlow duration을 beats로 변환 (4/4 time 기준)
-                        // w = whole note = 4 beats, h = half note = 2 beats, q = quarter note = 1 beat
-                        var durationFractionMap = {
-                            'w': 4, 'wr': 4, 'h': 2, 'hr': 2,
-                            'q': 1, 'qr': 1, '8': 0.5, '8r': 0.5,
-                            '16': 0.25, '16r': 0.25, '32': 0.125, '32r': 0.125
-                        };
                         
                         var measureYPositions = {};
                         
@@ -1587,28 +1716,68 @@ class MainActivity : AppCompatActivity() {
                                                 }
                                             }
                                             
+                                             // 연주기호 적용
                                             if (note.articulations && Array.isArray(note.articulations)) {
-                                                note.articulations.forEach(function(articulationType) {
+                                                note.articulations.forEach(function(articulationData,index) {
                                                     try {
                                                         var articulation = null;
-                                                        switch(articulationType) {
-                                                            case 'staccato': articulation = new VF.Articulation('a.'); break;
-                                                            case 'accent': articulation = new VF.Articulation('a>'); break;
-                                                            case 'tenuto': articulation = new VF.Articulation('a-'); break;
-                                                            case 'fermata': articulation = new VF.Articulation('am'); break;
-                                                            case 'marcato': articulation = new VF.Articulation('a^'); break;
-                                                            case 'staccatissimo': articulation = new VF.Articulation('av'); break;
+                                                        var type = null;
+                                                        var placement = null;
+                                                        
+                                                        // ArticulationData 객체 또는 문자열 처리
+                                                        if (typeof articulationData === 'string') {
+                                                            // 기존 문자열 형식 지원 (하위 호환성)
+                                                            type = articulationData;
+                                                        } else if (articulationData && articulationData.type) {
+                                                            // 새로운 객체 형식
+                                                            type = articulationData.type;
+                                                            placement = articulationData.placement;
+                                                        } else {
+                                                            log('loopKDT: Invalid articulation data: ' + JSON.stringify(articulationData));
+                                                            return;
+                                                        }
+                                                        
+                                                        log('loopKDT: type=' + type + ', placement=' + (placement || 'null'));
+                                                        
+                                                        switch(type) {
+                                                            case 'staccato':
+                                                                articulation = new VF.Articulation('a.');
+                                                                break;
+                                                            case 'accent':
+                                                                articulation = new VF.Articulation('a>');
+                                                                break;
+                                                            case 'tenuto':
+                                                                articulation = new VF.Articulation('a-');
+                                                                break;
+                                                            case 'fermata':
+                                                                articulation = new VF.Articulation('am');
+                                                                break;
+                                                            case 'marcato':
+                                                                articulation = new VF.Articulation('a^');
+                                                                break;
+                                                            case 'staccatissimo':
+                                                                articulation = new VF.Articulation('av');
+                                                                break;
                                                         }
                                                         if (articulation) {
-                                                            articulation.setPosition(3);
-                                                            note.addArticulation(0, articulation);
+                                                            // placement에 따라 위치 설정 (above: 3, below: 4)
+                                                             var position = (placement === 'below') ? VF.Annotation.Position.BELOW : VF.Annotation.Position.ABOVE;
+                                                          
+                                                            note.addArticulation(index, articulation);
+                                                        } else {
+                                                            log('loopKDT: Failed to create articulation for: ' + type);
                                                         }
                                                     } catch (e) {
-                                                        logError('Error adding articulation: ' + e.message);
+                                                        logError('loopKDT: Error adding articulation: ' + e.message);
                                                     }
                                                 });
+                                            } else {
+                                                if (note.articulations) {
+                                                    log('loopKDT: Note.articulations exists but is not an array: ' + typeof note.articulations);
+                                                } else {
+                                                    log('loopKDT: Note.articulations is undefined or null');
+                                                }
                                             }
-                                        }
                                     } catch (e) {
                                         logError('Error processing note: ' + e.message);
                                     }
@@ -1966,9 +2135,14 @@ class MainActivity : AppCompatActivity() {
                                     // 각 노트 확인
                                     trebleNotes.forEach(function(note, idx) {
                                         try {
-                                            log('Treble note ' + idx + ': duration=' + note.getDuration());
+                                            log('Note ' + idx + ' type: ' + typeof note + ', is StaveNote: ' + (note instanceof VF.StaveNote) + ', constructor: ' + (note && note.constructor ? note.constructor.name : 'null'));
+                                            if (note && typeof note.getDuration === 'function') {
+                                                log('Treble note ' + idx + ': duration=' + note.getDuration());
+                                            } else {
+                                                log('Treble note ' + idx + ': getDuration is not a function');
+                                            }
                                         } catch (e) {
-                                            logError('Error getting duration for treble note ' + idx + ': ' + e.message);
+                                            logError('Error checking treble note ' + idx + ': ' + e.message);
                                         }
                                     });
                                 } catch (e) {
@@ -1985,51 +2159,11 @@ class MainActivity : AppCompatActivity() {
                             
                             if (trebleNotes.length > 0) {
                                 try {
-                                    // 기호 정보 적용 (변음표, 점음표, 연주기호, 붙임줄, 슬러, 음표 연결, 손가락 번호, 페달)
+                                            // 기호 정보 적용 (공통 함수 사용)
                                     trebleNotes.forEach(function(note, index) {
                                         try {
-                                            // 변음표(Accidental) 추가 - keys에서 추출
-                                            if (note instanceof VF.StaveNote) {
-                                                var keys = note.getKeys();
-                                                if (keys && keys.length > 0) {
-                                                    keys.forEach(function(key, keyIndex) {
-                                                        try {
-                                                            // key 형식: "c/4", "c#/4", "eb/4", "c##/4", "ebb/4" 등
-                                                            var accidental = null;
-                                                            if (key.includes('##')) {
-                                                                accidental = new VF.Accidental('##');
-                                                            } else if (key.includes('bb')) {
-                                                                accidental = new VF.Accidental('bb');
-                                                            } else if (key.includes('#')) {
-                                                                accidental = new VF.Accidental('#');
-                                                            } else if (key.includes('b') && !key.includes('bb')) {
-                                                                // 'b'가 포함되어 있지만 'bb'가 아닌 경우 (예: "eb/4")
-                                                                var noteName = key.split('/')[0].toLowerCase();
-                                                                if (noteName.endsWith('b') && !noteName.endsWith('bb')) {
-                                                                    accidental = new VF.Accidental('b');
-                                                                }
-                                                            }
-                                                            if (accidental) {
-                                                                note.addModifier(accidental, keyIndex);
-                                                                log('Added accidental to note key: ' + key);
-                                                            }
-                                                        } catch (e) {
-                                                            logError('Error adding accidental: ' + e.message);
-                                                        }
-                                                    });
-                                                }
-                                                
-                                                // 점음표(Dot) 추가 - duration에 'd'가 포함된 경우
-                                                var duration = note.getDuration();
-                                                if (duration && duration.includes('d')) {
-                                                    try {
-                                                        dotted(note);
-                                                        log('Added dot to note');
-                                                    } catch (e) {
-                                                        logError('Error adding dot: ' + e.message);
-                                                    }
-                                                }
-                                            }
+                                            // 공통 함수로 노트 처리 (Accidental, Dot, Articulation)
+                                            processNote(note);
                                             
                                             // 손가락 번호 표시
                                             if (note.finger) {
@@ -2038,7 +2172,6 @@ class MainActivity : AppCompatActivity() {
                                                     fingerAnnotation.setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM);
                                                     fingerAnnotation.setFont('Arial', 12, 'bold');
                                                     note.addAnnotation(0, fingerAnnotation);
-                                                    log('Added finger ' + note.finger + ' to note');
                                                 } catch (e) {
                                                     logError('Error adding finger: ' + e.message);
                                                 }
@@ -2053,50 +2186,13 @@ class MainActivity : AppCompatActivity() {
                                                         pedalAnnotation.setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM);
                                                         pedalAnnotation.setFont('Arial', 10, 'italic');
                                                         note.addAnnotation(0, pedalAnnotation);
-                                                        log('Added pedal mark: ' + pedalMark);
                                                     }
                                                 } catch (e) {
                                                     logError('Error adding pedal: ' + e.message);
                                                 }
                                             }
-                                            
-                                            // 연주기호 적용
-                                            if (note.articulations && Array.isArray(note.articulations)) {
-                                                note.articulations.forEach(function(articulationType) {
-                                                    try {
-                                                        var articulation = null;
-                                                        switch(articulationType) {
-                                                            case 'staccato':
-                                                                articulation = new VF.Articulation('a.');
-                                                                break;
-                                                            case 'accent':
-                                                                articulation = new VF.Articulation('a>');
-                                                                break;
-                                                            case 'tenuto':
-                                                                articulation = new VF.Articulation('a-');
-                                                                break;
-                                                            case 'fermata':
-                                                                articulation = new VF.Articulation('am');
-                                                                break;
-                                                            case 'marcato':
-                                                                articulation = new VF.Articulation('a^');
-                                                                break;
-                                                            case 'staccatissimo':
-                                                                articulation = new VF.Articulation('av');
-                                                                break;
-                                                        }
-                                                        if (articulation) {
-                                                            articulation.setPosition(3); // 노트 위
-                                                            note.addArticulation(0, articulation);
-                                                            log('Added ' + articulationType + ' articulation');
-                                                        }
-                                                    } catch (e) {
-                                                        logError('Error adding articulation ' + articulationType + ': ' + e.message);
-                                                    }
-                                                });
-                                            }
                                         } catch (e) {
-                                            logError('Error processing note articulations: ' + e.message);
+                                            logError('Error processing note: ' + e.message);
                                         }
                                     });
                                     
@@ -2597,77 +2693,11 @@ class MainActivity : AppCompatActivity() {
                     display: block;
                 }
             </style>
-            <script>
-                // VexFlow 로드 함수 (로컬 우선, 실패 시 CDN)
-                function loadVexFlow() {
-                    return new Promise(function(resolve, reject) {
-                        // 이미 로드되어 있는지 확인
-                        if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
-                            resolve(Vex.Flow);
-                            return;
-                        }
-                        
-                        // 로컬 assets에서 먼저 시도
-                        var script = document.createElement('script');
-                        script.src = 'vexflow/vexflow-min.js';
-                        script.onload = function() {
-                            if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
-                                log('VexFlow loaded from local assets');
-                                resolve(Vex.Flow);
-                            } else {
-                                // 로컬 로드 실패 시 CDN 사용
-                                loadVexFlowFromCDN().then(resolve).catch(reject);
-                            }
-                        };
-                        script.onerror = function() {
-                            // 로컬 로드 실패 시 CDN 사용
-                            log('Local VexFlow load failed, trying CDN...');
-                            loadVexFlowFromCDN().then(resolve).catch(reject);
-                        };
-                        document.head.appendChild(script);
-                    });
-                }
-                
-                function loadVexFlowFromCDN() {
-                    return new Promise(function(resolve, reject) {
-                        var script = document.createElement('script');
-                        script.src = 'https://cdn.jsdelivr.net/npm/vexflow@4.2.5/releases/vexflow-min.js';
-                        script.onload = function() {
-                            if (typeof Vex !== 'undefined' && typeof Vex.Flow !== 'undefined') {
-                                log('VexFlow loaded from CDN');
-                                resolve(Vex.Flow);
-                            } else {
-                                reject(new Error('VexFlow not available after CDN load'));
-                            }
-                        };
-                        script.onerror = function() {
-                            reject(new Error('Failed to load VexFlow from CDN'));
-                        };
-                        document.head.appendChild(script);
-                    });
-                }
-            </script>
+            ${getCommonJavaScriptUtils()}
         </head>
         <body>
             <div id="sheet"></div>
             <script>
-                // 로그 함수
-                function log(msg) {
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.log) {
-                        AndroidInterface.log(msg);
-                    } else {
-                        console.log(msg);
-                    }
-                }
-                
-                function logError(msg) {
-                    if (typeof AndroidInterface !== 'undefined' && AndroidInterface.logError) {
-                        AndroidInterface.logError(msg);
-                    } else {
-                        console.error(msg);
-                    }
-                }
-                
                 function startRendering() {
                     var div = document.getElementById("sheet");
                     if (!div) {
@@ -2688,6 +2718,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 function renderSheetMusic(VF, div) {
+                    // VF를 전역 변수로 설정하여 processNote 등에서 접근 가능하도록 함
+                    window.VF = VF;
+                    
                     try {
                         log('Starting VexFlow rendering for all measures...');
                         
@@ -2713,14 +2746,6 @@ class MainActivity : AppCompatActivity() {
                         var beatDuration = 4;
                         var measureHeight = $measureHeight;
                         var currentMeasure = 1;
-                        
-                        // VexFlow duration을 beats로 변환 (4/4 time 기준)
-                        // w = whole note = 4 beats, h = half note = 2 beats, q = quarter note = 1 beat
-                        var durationFractionMap = {
-                            'w': 4, 'wr': 4, 'h': 2, 'hr': 2,
-                            'q': 1, 'qr': 1, '8': 0.5, '8r': 0.5,
-                            '16': 0.25, '16r': 0.25, '32': 0.125, '32r': 0.125
-                        };
                         
                         // 마디별 Y 위치 저장
                         var measurePositions = {};
@@ -3351,6 +3376,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 function renderSheetMusic(VF, div) {
+                    // VF를 전역 변수로 설정하여 processNote 등에서 접근 가능하도록 함
+                    window.VF = VF;
+                    
                     try {
                         log('Starting VexFlow rendering with three staves...');
                         
@@ -3761,6 +3789,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 function renderSheetMusic(VF, div) {
+                    // VF를 전역 변수로 설정하여 processNote 등에서 접근 가능하도록 함
+                    window.VF = VF;
+                    
                     try {
                         log('Starting VexFlow rendering...');
                         
