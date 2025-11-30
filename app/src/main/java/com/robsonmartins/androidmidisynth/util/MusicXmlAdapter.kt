@@ -493,7 +493,7 @@ object MusicXmlAdapter {
     private fun extractArticulations(note: Note): List<String> {
         val articulations = mutableListOf<String>()
         
-        note.notation?.articulations?.let { arts ->
+        note.notations?.articulations?.let { arts ->
             // Staccato
             if (arts.staccato != null) {
                 articulations.add("staccato")
@@ -509,21 +509,21 @@ object MusicXmlAdapter {
      * 붙임줄 타입 추출
      */
     private fun extractTieType(note: Note): String? {
-        return note.notation?.tiedList?.firstOrNull()?.type
+        return note.notations?.tiedList?.firstOrNull()?.type
     }
     
     /**
      * 슬러 타입 추출
      */
     private fun extractSlurType(note: Note): String? {
-        return note.notation?.slurList?.firstOrNull()?.type
+        return note.notations?.slurList?.firstOrNull()?.type
     }
     
     /**
      * 음표 연결 타입 추출
      */
     private fun extractBeamType(note: Note): String? {
-        return note.beam?.description
+        return note.beamList?.firstOrNull()?.description
     }
     
     /**

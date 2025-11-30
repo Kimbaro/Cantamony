@@ -12,47 +12,12 @@ class SelectMidiActivity : AppCompatActivity() {
 
     private val albums = listOf(
         CantamonyAlbum(
-            "Minuet 학습앨범 1",
+            "Dorico 학습앨범 5",
             mapOf(
-                "mxl" to "12_Minuet.mxl",
-                "mid" to "12_Minuet.mid"
-            )
-        ),
-        CantamonyAlbum(
-            "Minuet 학습앨범 2",
-            mapOf(
-                "mxl" to "J._S._Bach_-_Air_on_the_G_String_Piano_arrangement.mxl",
-                "mid" to "12_Minuet.mid"
-            )
-        ),
-        CantamonyAlbum(
-            "Minuet 학습앨범 3",
-            mapOf(
-                "musicxml" to "12_Minuet.musicxml",
-                "mid" to "12_Minuet.mid"
-            )
-        ),
-        CantamonyAlbum(
-            "Minuet 학습앨범 4",
-            mapOf(
-                "musicxml" to "Minuet.musicxml",
-                "mid" to "12_Minuet.mid"
-            )
-        ),
-        CantamonyAlbum(
-            "J 학습앨범 5",
-            mapOf(
-                "musicxml" to "j - 01_Violin - 01 Flow 1.musicxml",
+                "musicxml" to "Minuet 도리코 최종 - 01_피아노 - 01 Minuet.musicxml",
                 "mid" to "j - Full score - Flow 1.mid"
             )
-        ),
-                CantamonyAlbum(
-                "Dorico 학습앨범 5",
-        mapOf(
-            "musicxml" to "Minuet 도리코 최종 - 01_피아노 - 01 Minuet.musicxml",
-            "mid" to "j - Full score - Flow 1.mid"
         )
-    )
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,7 +52,10 @@ class SelectMidiActivity : AppCompatActivity() {
         } else if (musicxmlFileName != null) {
             // MusicXML 파일 이름 전달 (MainActivity에서 MusicXML 읽기 작업 진행)
             intent.putExtra("MUSICXML_FILE_PATH", musicxmlFileName)
-            Log.d("SelectMidiActivity", "MusicXML file name passed to MainActivity: $musicxmlFileName")
+            Log.d(
+                "SelectMidiActivity",
+                "MusicXML file name passed to MainActivity: $musicxmlFileName"
+            )
         }
 
         // MainActivity로 이동

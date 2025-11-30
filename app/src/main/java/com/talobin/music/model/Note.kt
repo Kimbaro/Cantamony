@@ -1,11 +1,15 @@
 package com.talobin.music.parser.model
 
+import com.tickaroo.tikxml.annotation.Attribute
 import com.tickaroo.tikxml.annotation.Element
 import com.tickaroo.tikxml.annotation.PropertyElement
 import com.tickaroo.tikxml.annotation.Xml
 
 @Xml
 data class Note(
+    @Attribute(name = "default-x")
+        val defaultX: String?,
+
     @Element
         val pitch: Pitch?,
 
@@ -17,6 +21,7 @@ data class Note(
 
     @PropertyElement
         val type: String?,
+    
     @PropertyElement
         val stem: String?,
 
@@ -35,9 +40,15 @@ data class Note(
     @Element
         val rest: Rest?,
 
-    @Element
-        val notation: Notation?,
+    @Element(name = "notations")
+        val notations: Notations?,
 
-    @Element
-        val beam: Beam?
+    @Element(name = "beam")
+        val beamList: List<Beam>?,
+    
+    @Element(name = "dot")
+        val dot: Dot?,
+    
+    @Element(name = "time-modification")
+        val timeModification: TimeModification?
 )

@@ -10,6 +10,12 @@ data class Direction(
     @Attribute
     val placement: String?,  // "above" or "below"
     
+    @Attribute
+    val directive: String?,  // "yes" or "no"
+    
+    @Attribute
+    val system: String?,  // "only-top", "only-bottom", etc.
+    
     @Element
     val dynamics: Dynamics?,
     
@@ -18,6 +24,9 @@ data class Direction(
     
     @Element
     val sound: Sound?,
+    
+    @Element(name = "staff")
+    val staff: Staff?,
     
     @PropertyElement
     val offset: String?
@@ -33,6 +42,9 @@ data class DirectionType(
     
     @Element
     val metronome: Metronome?,
+    
+    @Element
+    val wedge: Wedge?,
     
     @Element
     val segno: Segno?,
@@ -52,11 +64,50 @@ data class Words(
 
 @Xml
 data class Metronome(
-    @PropertyElement
+    @Attribute(name = "font-family")
+    val fontFamily: String?,
+    
+    @Attribute(name = "font-style")
+    val fontStyle: String?,
+    
+    @Attribute(name = "font-weight")
+    val fontWeight: String?,
+    
+    @Attribute(name = "font-size")
+    val fontSize: String?,
+    
+    @Attribute(name = "default-y")
+    val defaultY: String?,
+    
+    @PropertyElement(name = "beat-unit")
     val beatUnit: String?,
     
+    @Element(name = "per-minute")
+    val perMinute: PerMinute?
+)
+
+@Xml
+data class PerMinute(
+    @Attribute(name = "font-family")
+    val fontFamily: String?,
+    
+    @Attribute(name = "font-style")
+    val fontStyle: String?,
+    
+    @Attribute(name = "font-weight")
+    val fontWeight: String?,
+    
+    @Attribute(name = "font-size")
+    val fontSize: String?,
+    
     @PropertyElement
-    val perMinute: String?
+    val value: String?
+)
+
+@Xml
+data class Staff(
+    @PropertyElement
+    val value: String?
 )
 
 @Xml

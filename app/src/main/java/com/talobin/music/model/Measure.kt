@@ -13,14 +13,26 @@ data class Measure(
     @Attribute
         val implicit: String?,
 
-    @Element(name = "note")
-        val noteList: List<Note>?,
+    @Element(name = "print")
+        val print: Print?,
 
     @Element(name = "attributes")
         val attributesList: List<Attributes>?,
     
+    @Element(name = "note")
+        val noteList: List<Note>?,
+    
+    @Element(name = "backup")
+        val backup: Backup?,
+    
+    @Element(name = "sound")
+        val sound: Sound?,
+    
     @Element(name = "direction")
         val directionList: List<Direction>?,
+    
+    @Element(name = "forward")
+        val forward: Forward?,
     
     @Element(name = "barline")
         val barlineList: List<Barline>?
