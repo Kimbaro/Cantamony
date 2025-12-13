@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; padding: 0; background: #000; }
+        #osmdContainer { width: 100%; height: 100vh; }
+        /* OSMD 기본 SVG(선/텍스트)가 검정색이라, 배경이 검정이면 안 보일 수 있어 흰 배경 강제 */
+        #osmdContainer, #osmdContainer svg { background: #fff; }
+    </style>
+</head>
+<body>
+    <div id="osmdContainer"></div>
+    <script src="opensheetmusicdisplay.min.js"></script>
+    <script>
+        // osmd를 전역 변수로 선언하여 확대/축소 버튼에서 접근 가능하도록 함
+        var osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmdContainer", {
+            backend: "svg",
+            drawTitle: true,
+            autoResize: true
+        });
+        
+        // Android에서 MusicXML 내용을 받아옴
+        function loadMusicXml() {
+            if (typeof OSMDAndroid !== 'undefined' && OSMDAndroid.getMusicXmlContent) {
+                var xmlContent = OSMDAndroid.getMusicXmlContent();
+                osmd.load(xmlContent)
+                    .then(function() {
+                        console.log("OSMD loaded successfully");
+                        osmd.render();
+                        if (typeof OSMDAndroid !== 'undefined' && OSMDAndroid.onOSMDReady) {
+                            OSMDAndroid.onOSMDReady();
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error("OSMD load error:", error);
+                    });
+            }
+        }
+        
+        // 페이지 로드 후 실행
+        window.onload = function() {
+            loadMusicXml();
+        };
+    </script>
+</body>
+</html>
+

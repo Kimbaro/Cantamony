@@ -1,0 +1,614 @@
+# MusicXML & MIDI 동기화 구현 플랜
+
+## 개요
+안드로이드 앱에서 MusicXML 파일로 악보를 표시하고, MIDI 파일로 음악을 재생하며, 재생 구간을 MusicXML 악보에 동기화하는 기능 구현 플랜입니다.
+
+---
+
+## 1. MusicXML 렌더링 확인 플랜
+
+### 현재 상태
+- ✅ `activity_main.xml`에 `WebView` (`webViewSheetMusic`) 존재
+- ✅ `MusicXmlParser`와 `MusicXmlAdapter`로 파싱 가능
+- ✅ Assets에 MusicXML 파일 존재: `Minuet 도리코 최종 - 01_피아노 - 01 Minuet.musicxml`
+- ❌ OSMD 라이브러리 파일 미추가
+- ❌ WebView에 OSMD 초기화 코드 없음
+
+### Step 1: OSMD 라이브러리 추가
+```bash
+# 1. OSMD 최신 릴리스 다운로드
+# https://github.com/opensheetmusicdisplay/opensheetmusicdisplay/releases
+# opensheetmusicdisplay.min.js 파일 다운로드
+
+# 2. assets 폴더에 배치
+app/src/main/assets/opensheetmusicdisplay.min.js
+```
+
+### Step 2-1: HTML 템플릿 파일 생성
+`app/src/main/assets/osmd_template.html` 파일을 생성:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; padding: 0; background: #000; }
+        #osmdContainer { width: 100%; height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="osmdContainer"></div>
+    <script src="opensheetmusicdisplay.min.js"></script>
+    <script>
+        var osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmdContainer", {
+            backend: "svg",
+            drawTitle: true,
+            autoResize: true
+        });
+        
+        // Android에서 MusicXML 내용을 받아옴
+        function loadMusicXml() {
+            if (typeof OSMDAndroid !== 'undefined' && OSMDAndroid.getMusicXmlContent) {
+                var xmlContent = OSMDAndroid.getMusicXmlContent();
+                osmd.load(xmlContent)
+                    .then(function() {
+                        console.log("OSMD loaded successfully");
+                        osmd.render();
+                        if (typeof OSMDAndroid !== 'undefined' && OSMDAndroid.onOSMDReady) {
+                            OSMDAndroid.onOSMDReady();
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error("OSMD load error:", error);
+                    });
+            }
+        }
+        
+        // 페이지 로드 후 실행
+        window.onload = function() {
+            loadMusicXml();
+        };
+    </script>
+</body>
+</html>
+```
+
+### Step 2-2: MusicXML 로드 및 OSMD 렌더링 테스트
+```kotlin
+// MainActivity.kt에 추가할 테스트 코드
+
+/**
+ * JavaScript Interface
+ */
+class OSMDInterface {
+    private var musicXmlContent: String? = null
+    
+    fun setMusicXmlContent(content: String) {
+        musicXmlContent = content
+    }
+    
+    @JavascriptInterface
+    fun getMusicXmlContent(): String {
+        return musicXmlContent ?: ""
+    }
+    
+    @JavascriptInterface
+    fun onOSMDReady() {
+        // OSMD 렌더링 완료 시 호출
+        Log.d("MainActivity", "OSMD ready")
+    }
+}
+
+private fun testMusicXmlRendering() {
+    val webView = findViewById<WebView>(R.id.webViewSheetMusic)
+    
+    // WebView 설정
+    webView.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        allowFileAccess = true
+    }
+    
+    // MusicXML 파일 읽기
+    val musicXmlContent = assets.open(musicxmlFileName ?: "").bufferedReader().use { it.readText() }
+    
+    // JavaScript Interface 생성 및 MusicXML 내용 설정
+    val osmdInterface = OSMDInterface()
+    osmdInterface.setMusicXmlContent(musicXmlContent)
+    
+    // JavaScript Interface 추가
+    webView.addJavascriptInterface(osmdInterface, "OSMDAndroid")
+    
+    // HTML 파일 로드
+    webView.loadUrl("file:///android_asset/osmd_template.html")
+}
+```
+
+**참고**: `@JavascriptInterface` 어노테이션을 사용하려면 다음 import가 필요합니다:
+```kotlin
+import android.webkit.JavascriptInterface
+```
+
+### 확인 항목
+- [ ] OSMD 라이브러리 파일이 assets에 있는가? (`opensheetmusicdisplay.min.js`)
+- [ ] HTML 템플릿 파일이 assets에 있는가? (`osmd_template.html`)
+- [ ] WebView에서 JavaScript가 활성화되어 있는가?
+- [ ] JavaScript Interface가 정상적으로 등록되는가?
+- [ ] MusicXML 파일이 정상적으로 로드되는가?
+- [ ] OSMD가 악보를 렌더링하는가?
+- [ ] 확대/축소 버튼이 동작하는가?
+
+---
+
+## 2. MIDI 재생 확인 플랜
+
+### 현재 상태
+- ✅ `SynthManager` 존재 (FluidSynth 기반)
+- ✅ `MidiMultiPlayer` 존재 (tick 기반 재생)
+- ✅ `MidiFile` 파싱 가능 (`com.leff.midi` 라이브러리)
+- ✅ Assets에 MIDI 파일 존재: `j - Full score - Flow 1.mid`
+- ❌ MainActivity에서 MIDI 재생 초기화 없음
+- ❌ MIDI 파일을 MidiEvent로 변환하는 코드 없음
+
+### Step 1: MIDI 파일 파싱 및 이벤트 변환
+```kotlin
+// MainActivity.kt에 추가할 테스트 코드
+private fun testMidiPlayback() {
+    // 1. SynthManager 초기화
+    val synthManager = SynthManager.getInstance(applicationContext)
+    
+    // 2. MIDI 파일 로드
+    val midiFileName = selectedAlbum?.albumAsset?.get("mid")
+    val inputStream = assets.open(midiFileName ?: "")
+    val midiFile = MidiFile(inputStream)
+    
+    // 3. MIDI 이벤트 파싱
+    val events = parseMidiFileToEvents(midiFile)
+    
+    // 4. MidiMultiPlayer에 이벤트 추가
+    val midiPlayer = MidiMultiPlayer(synthManager)
+    events.forEachIndexed { trackIndex, trackEvents ->
+        midiPlayer.addTrack(trackEvents, trackIndex)
+    }
+    
+    // 5. 재생 테스트
+    midiPlayer.setBPM(120.0)
+    midiPlayer.startAll()
+}
+
+/**
+ * MIDI 파일을 MidiEvent 리스트로 변환
+ */
+private fun parseMidiFileToEvents(midiFile: MidiFile): Map<Int, List<MidiEvent>> {
+    val trackEventsMap = mutableMapOf<Int, MutableList<MidiEvent>>()
+    
+    midiFile.tracks.forEachIndexed { trackIndex, track ->
+        val events = mutableListOf<MidiEvent>()
+        
+        track.events.forEach { midiEvent ->
+            when (midiEvent) {
+                is NoteOn -> {
+                    if (midiEvent.velocity > 0) {
+                        events.add(
+                            MidiEvent(
+                                tick = midiEvent.tick,
+                                note = midiEvent.noteValue,
+                                velocity = midiEvent.velocity,
+                                isNoteOn = true
+                            )
+                        )
+                    } else {
+                        // velocity 0은 NoteOff
+                        events.add(
+                            MidiEvent(
+                                tick = midiEvent.tick,
+                                note = midiEvent.noteValue,
+                                velocity = 0,
+                                isNoteOn = false
+                            )
+                        )
+                    }
+                }
+                is NoteOff -> {
+                    events.add(
+                        MidiEvent(
+                            tick = midiEvent.tick,
+                            note = midiEvent.noteValue,
+                            velocity = 0,
+                            isNoteOn = false
+                        )
+                    )
+                }
+            }
+        }
+        
+        trackEventsMap[trackIndex] = events
+    }
+    
+    return trackEventsMap
+}
+```
+
+### Step 2: 재생 컨트롤 연동
+```kotlin
+// activity_main.xml의 버튼들과 연동
+private fun setupPlaybackControls() {
+    val btnPlay = findViewById<Button>(R.id.btnPlayAll)
+    val btnStop = findViewById<Button>(R.id.btnStopAll)
+    val seekBar = findViewById<SeekBar>(R.id.seekBarMeasure)
+    
+    btnPlay.setOnClickListener {
+        if (midiPlayer.isPlaying()) {
+            midiPlayer.stopAll()
+            btnPlay.text = "▶"
+        } else {
+            midiPlayer.startAll()
+            btnPlay.text = "⏸"
+            startPlaybackTracking() // 재생 위치 추적 시작
+        }
+    }
+    
+    btnStop.setOnClickListener {
+        midiPlayer.stopAll()
+        midiPlayer.reset()
+        btnPlay.text = "▶"
+    }
+    
+    // SeekBar 업데이트
+    // ...
+}
+```
+
+### 확인 항목
+- [ ] SynthManager가 정상 초기화되는가?
+- [ ] MIDI 파일이 정상 파싱되는가?
+- [ ] MidiEvent 리스트가 올바르게 생성되는가?
+- [ ] MIDI 재생이 정상 동작하는가?
+- [ ] 재생/정지 버튼이 동작하는가?
+- [ ] BPM 조절이 동작하는가?
+
+---
+
+## 3. MusicXML, MIDI 마디 구간 연동 플랜
+
+### 목표
+- MIDI 재생 위치(tick)를 MusicXML 마디/노트와 매핑
+- 재생 중 현재 마디를 악보에 하이라이트
+- SeekBar로 마디 이동
+
+### 아키텍처 설계
+
+```
+┌─────────────────────────────────────────────┐
+│         시간 동기화 매핑 시스템               │
+├─────────────────────────────────────────────┤
+│                                             │
+│  MIDI Tick (0 ~ totalTicks)                 │
+│       ↓                                     │
+│  [TickToMeasureMapper]                      │
+│       ↓                                     │
+│  MusicXML Measure Number                     │
+│       ↓                                     │
+│  OSMD Highlight                             │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Phase 1: 시간 매핑 데이터 구조 설계
+
+```kotlin
+/**
+ * MIDI tick과 MusicXML 마디를 매핑하는 데이터 클래스
+ */
+data class MeasureTimeMapping(
+    val measureNumber: String,        // MusicXML 마디 번호
+    val startTick: Long,              // 마디 시작 MIDI tick
+    val endTick: Long,                // 마디 종료 MIDI tick
+    val startTimeMs: Long,            // 마디 시작 시간 (ms)
+    val endTimeMs: Long,              // 마디 종료 시간 (ms)
+    val timeSignature: Pair<Int, Int> // 박자 (4/4, 3/4 등)
+)
+
+/**
+ * 노트별 시간 매핑 (더 정밀한 동기화용)
+ */
+data class NoteTimeMapping(
+    val measureNumber: String,
+    val noteIndex: Int,                // 마디 내 노트 인덱스
+    val noteId: String,               // OSMD에서 식별할 ID
+    val startTick: Long,
+    val endTick: Long,
+    val midiNote: Int,                 // MIDI 노트 번호 (0-127)
+    val xmlNote: String                // MusicXML 노트 (예: "C/4")
+)
+```
+
+### Phase 2: 매핑 생성 유틸리티
+
+```kotlin
+/**
+ * MusicXML과 MIDI를 시간 기준으로 매핑
+ */
+object MusicXmlMidiMapper {
+    
+    /**
+     * MusicXML 마디와 MIDI tick을 매핑
+     * 
+     * 전략:
+     * 1. MusicXML의 각 마디에 대해 박자 정보 추출
+     * 2. MIDI의 템포 정보 추출 (Tempo 이벤트)
+     * 3. 마디별 누적 tick 계산
+     * 4. 매핑 테이블 생성
+     */
+    fun createMeasureMapping(
+        measureDataList: List<MeasureData>,
+        midiFile: MidiFile,
+        initialBPM: Double = 120.0
+    ): List<MeasureTimeMapping> {
+        val mappings = mutableListOf<MeasureTimeMapping>()
+        
+        // 1. MIDI 템포 이벤트 추출
+        val tempoEvents = extractTempoEvents(midiFile)
+        
+        // 2. MIDI 박자 정보 추출
+        val timeSignatureEvents = extractTimeSignatureEvents(midiFile)
+        
+        // 3. MusicXML 마디 순회하며 tick 계산
+        var currentTick: Long = 0
+        var currentBPM = initialBPM
+        var currentTimeSignature = Pair(4, 4) // 기본값
+        
+        measureDataList.forEach { measure ->
+            // 마디의 박자 정보
+            val measureTimeSig = measure.timeSignature
+            if (measureTimeSig != Pair(4, 4)) {
+                currentTimeSignature = measureTimeSig
+            }
+            
+            // 마디 길이 계산 (박자 기준)
+            val measureLengthInBeats = measureTimeSig.first.toDouble()
+            val ticksPerBeat = midiFile.resolution
+            val measureLengthInTicks = (measureLengthInBeats * ticksPerBeat).toLong()
+            
+            // 템포 변경 확인
+            val tempoChange = tempoEvents.find { it.tick <= currentTick + measureLengthInTicks }
+            if (tempoChange != null) {
+                currentBPM = tempoChange.bpm
+            }
+            
+            // 시간 계산 (ms)
+            val ticksPerMs = (60000.0 / (currentBPM * ticksPerBeat))
+            val startTimeMs = (currentTick * ticksPerMs).toLong()
+            val endTimeMs = ((currentTick + measureLengthInTicks) * ticksPerMs).toLong()
+            
+            mappings.add(
+                MeasureTimeMapping(
+                    measureNumber = measure.measureNumber,
+                    startTick = currentTick,
+                    endTick = currentTick + measureLengthInTicks,
+                    startTimeMs = startTimeMs,
+                    endTimeMs = endTimeMs,
+                    timeSignature = currentTimeSignature
+                )
+            )
+            
+            currentTick += measureLengthInTicks
+        }
+        
+        return mappings
+    }
+    
+    /**
+     * MIDI 파일에서 템포 이벤트 추출
+     */
+    private fun extractTempoEvents(midiFile: MidiFile): List<TempoEvent> {
+        val tempoEvents = mutableListOf<TempoEvent>()
+        
+        midiFile.tracks.forEach { track ->
+            track.events.forEach { event ->
+                if (event is Tempo) {
+                    val bpm = 60000000.0 / event.tempo
+                    tempoEvents.add(TempoEvent(event.tick, bpm))
+                }
+            }
+        }
+        
+        return tempoEvents.sortedBy { it.tick }
+    }
+    
+    /**
+     * MIDI 파일에서 박자 정보 추출
+     */
+    private fun extractTimeSignatureEvents(midiFile: MidiFile): List<TimeSignatureEvent> {
+        // TimeSignature 이벤트 추출 로직
+        // ...
+    }
+}
+
+/**
+ * 템포 이벤트 데이터 클래스
+ */
+data class TempoEvent(
+    val tick: Long,
+    val bpm: Double
+)
+
+/**
+ * 박자 이벤트 데이터 클래스
+ */
+data class TimeSignatureEvent(
+    val tick: Long,
+    val numerator: Int,
+    val denominator: Int
+)
+```
+
+### Phase 3: 실시간 동기화
+
+```kotlin
+class MainActivity : AppCompatActivity() {
+    
+    private var measureMappings: List<MeasureTimeMapping> = emptyList()
+    private var currentMeasureIndex: Int = -1
+    private var playbackUpdateHandler: Handler? = null
+    
+    /**
+     * 재생 위치 추적 시작
+     */
+    private fun startPlaybackTracking() {
+        playbackUpdateHandler = Handler(Looper.getMainLooper())
+        
+        val updateRunnable = object : Runnable {
+            override fun run() {
+                if (midiPlayer.isPlaying()) {
+                    val currentTick = midiPlayer.getCurrentTick()
+                    updateMeasureHighlight(currentTick)
+                    updateSeekBar(currentTick)
+                    playbackUpdateHandler?.postDelayed(this, 50) // 50ms마다 업데이트
+                }
+            }
+        }
+        
+        playbackUpdateHandler?.post(updateRunnable)
+    }
+    
+    /**
+     * 현재 tick에 해당하는 마디 하이라이트
+     */
+    private fun updateMeasureHighlight(currentTick: Long) {
+        val measureIndex = measureMappings.indexOfFirst { 
+            currentTick >= it.startTick && currentTick < it.endTick 
+        }
+        
+        if (measureIndex != currentMeasureIndex && measureIndex >= 0) {
+            currentMeasureIndex = measureIndex
+            val measure = measureMappings[measureIndex]
+            
+            // OSMD에 하이라이트 요청
+            highlightMeasureInOSMD(measure.measureNumber)
+            
+            // 마디 정보 표시
+            updateMeasureInfo(measure)
+        }
+    }
+    
+    /**
+     * OSMD에서 마디 하이라이트
+     */
+    private fun highlightMeasureInOSMD(measureNumber: String) {
+        val jsCode = """
+            highlightMeasure('$measureNumber');
+        """.trimIndent()
+        
+        webView.evaluateJavascript(jsCode, null)
+    }
+    
+    /**
+     * SeekBar 업데이트
+     */
+    private fun updateSeekBar(currentTick: Long) {
+        val totalTicks = midiPlayer.getTotalTicks()
+        if (totalTicks > 0) {
+            val progress = ((currentTick * 100) / totalTicks).toInt()
+            findViewById<SeekBar>(R.id.seekBarMeasure)?.progress = progress
+            
+            // 마디 정보 텍스트 업데이트
+            val currentMeasure = measureMappings.find { 
+                currentTick >= it.startTick && currentTick < it.endTick 
+            }
+            currentMeasure?.let {
+                findViewById<TextView>(R.id.txtMeasure)?.text = 
+                    "마디: ${it.measureNumber} / ${measureMappings.size}"
+            }
+        }
+    }
+}
+```
+
+### Phase 4: OSMD 하이라이트 JavaScript
+
+```javascript
+// OSMD HTML에 추가할 JavaScript 함수
+function highlightMeasure(measureNumber) {
+    // 이전 하이라이트 제거
+    clearAllHighlights();
+    
+    // 해당 마디의 SVG 요소 찾기
+    // OSMD는 마디별로 그룹화되어 있으므로 data-measure 속성으로 찾기
+    const measureElements = document.querySelectorAll(`[data-measure="${measureNumber}"]`);
+    
+    measureElements.forEach(element => {
+        // 배경색 변경 또는 테두리 추가
+        element.style.backgroundColor = 'rgba(29, 185, 84, 0.2)'; // 반투명 녹색
+        element.style.transition = 'background-color 0.3s';
+    });
+    
+    // 해당 마디로 스크롤
+    if (measureElements.length > 0) {
+        measureElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+function clearAllHighlights() {
+    document.querySelectorAll('[data-measure]').forEach(element => {
+        element.style.backgroundColor = 'transparent';
+    });
+}
+
+// OSMD 렌더링 후 마디에 data-measure 속성 추가
+function addMeasureAttributes() {
+    // OSMD의 SVG 구조를 분석하여 마디별로 그룹화
+    // 이는 OSMD의 내부 구조에 따라 달라질 수 있음
+    // 일반적으로 각 마디는 <g> 태그로 그룹화됨
+}
+```
+
+### 구현 우선순위
+
+1. **Phase 1: 데이터 구조 설계** (1일)
+   - MeasureTimeMapping 클래스 생성
+   - NoteTimeMapping 클래스 생성
+
+2. **Phase 2: 매핑 생성 유틸리티** (2-3일)
+   - MusicXML 마디 정보 추출
+   - MIDI 템포/박자 정보 추출
+   - 시간 매핑 계산
+   - MusicXmlMidiMapper 구현
+
+3. **Phase 3: 실시간 동기화** (2일)
+   - 재생 위치 추적
+   - 마디 하이라이트
+   - SeekBar 연동
+   - MainActivity에 통합
+
+4. **Phase 4: OSMD 하이라이트** (1-2일)
+   - JavaScript 함수 추가
+   - SVG 요소 선택 및 스타일링
+   - 마디 속성 추가
+
+### 주의사항
+
+1. **시간 정확도**
+   - MIDI와 MusicXML의 시간 기준이 다를 수 있음
+   - 템포 변경 처리 필요
+   - 박자 변경 처리 필요
+
+2. **매핑 정확도**
+   - 같은 음높이의 중복 노트 처리
+   - 화음 처리
+   - 쉼표 처리
+
+3. **성능**
+   - 50ms마다 업데이트
+   - JavaScript 호출 최적화
+   - 메모리 사용량 관리
+
+---
+
+## 참고 자료
+
+- OSMD 공식 문서: https://github.com/opensheetmusicdisplay/opensheetmusicdisplay/wiki/Getting-Started
+- OSMD 데모: https://opensheetmusicdisplay.github.io/demo/
+- MIDI 파일 포맷: https://www.midi.org/specifications-old/item/standard-midi-files-smf
+- MusicXML 스펙: https://www.musicxml.com/

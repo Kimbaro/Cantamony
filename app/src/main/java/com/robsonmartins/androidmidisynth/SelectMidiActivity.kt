@@ -28,7 +28,7 @@ class SelectMidiActivity : AppCompatActivity() {
         val recyclerView = findViewById<RecyclerView>(R.id.recyclerViewAlbums)
         recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = AlbumAdapter(albums) { selectedAlbum ->
-            // MXL 파일을 MusicXML 문자열로 변환 후 MainActivity로 이동
+            // 앨범 선택 처리
             handleAlbumSelection(selectedAlbum)
         }
     }
@@ -43,15 +43,15 @@ class SelectMidiActivity : AppCompatActivity() {
         val intent = Intent(this@SelectMidiActivity, MainActivity::class.java)
 
         // SELECTED_ALBUM 전달 (MIDI 파일 경로용)
-        intent.putExtra("SELECTED_ALBUM", selectedAlbum)
+        intent.putExtra(MainActivity.EXTRA_SELECTED_ALBUM, selectedAlbum)
 
         if (mxlFileName != null) {
             // MXL 파일 이름 전달 (MainActivity에서 MusicXML 변환 작업 진행)
-            intent.putExtra("MXL_FILE_PATH", mxlFileName)
+            intent.putExtra(MainActivity.EXTRA_MXL_FILE_PATH, mxlFileName)
             Log.d("SelectMidiActivity", "MXL file name passed to MainActivity: $mxlFileName")
         } else if (musicxmlFileName != null) {
             // MusicXML 파일 이름 전달 (MainActivity에서 MusicXML 읽기 작업 진행)
-            intent.putExtra("MUSICXML_FILE_PATH", musicxmlFileName)
+            intent.putExtra(MainActivity.EXTRA_MUSICXML_FILE_PATH, musicxmlFileName)
             Log.d(
                 "SelectMidiActivity",
                 "MusicXML file name passed to MainActivity: $musicxmlFileName"

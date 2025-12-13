@@ -40,6 +40,14 @@ import java.io.IOException
  * @param context The context object.
  */
 class SynthManager(private val context: Context) {
+    companion object {
+        init {
+            // CMakeLists.txt: add_library(synth-lib SHARED ...)
+            // System.loadLibrary expects the name without "lib" prefix and ".so" suffix.
+            System.loadLibrary("synth-lib")
+        }
+    }
+
     val appContext: Context get() = context
 
     init {
@@ -90,11 +98,6 @@ class SynthManager(private val context: Context) {
     /** Public wrapper to set reverb level */
     fun setReverb(level: Int) {
         fluidsynthReverb(level)
-    }
-
-    /** @brief Initialize the instance. */
-    init {
-        fluidsynthInit()
     }
 
     /** @brief Finalize the instance. */
