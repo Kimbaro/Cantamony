@@ -1,10 +1,18 @@
 package com.robsonmartins.androidmidisynth
 
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.SeekBar
@@ -43,10 +51,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var midiPlayer: MidiMultiPlayer
     private var midiFile: com.leff.midi.MidiFile? = null
 
+    private val isDebuggableApp: Boolean by lazy {
+        (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.hide()
         setContentView(R.layout.activity_main)
+
+        // WebView 원격 디버깅(Chrome DevTools) 활성화: 디버그 빌드에서만
+        if (isDebuggableApp) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
 
         // 로딩 화면 초기화
         loadingLayout = findViewById(R.id.loadingLayout)
@@ -159,6 +176,9 @@ class MainActivity : AppCompatActivity() {
             domStorageEnabled = true
             allowFileAccess = true
         }
+
+        // WebView가 실제로 화면에 렌더링/로드되는지 확인하기 위한 진단 훅
+        setupWebViewDiagnostics(webView)
         
         // MusicXML 파일 읽기 (SelectMidiActivity에서 Intent로 전달받은 파일명 사용)
         musicxmlFileName?.let { fileName ->
@@ -192,6 +212,30 @@ class MainActivity : AppCompatActivity() {
         loadingProgressBar.visibility = View.VISIBLE
         loadingText.visibility = View.VISIBLE
         Log.d("Loading", "Loading screen shown")
+
+        // 디버그 빌드에서: 로딩 화면이 덮고 있어 WebView 렌더링 여부를 못 보는 경우를 대비
+        if (isDebuggableApp) {
+            loadingLayout.isLongClickable = true
+            loadingLayout.setOnLongClickListener {
+                Log.w("Loading", "Loading overlay dismissed manually (DEBUG)")
+                hideLoadingScreen()
+                true
+            }
+            loadingText.text = "악보를 그리는중... (디버그: 길게 눌러 로딩 화면 숨김)"
+        }
+
+        // 일정 시간 이상 로딩이 지속되면 상태를 갱신해 원인 파악을 돕는다
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (loadingLayout.visibility == View.VISIBLE) {
+                val hint = if (isDebuggableApp) {
+                    "로딩이 지연됩니다. Logcat에서 WebViewDiag 확인 / (디버그: 길게 눌러 로딩 화면 숨김)"
+                } else {
+                    "로딩이 지연됩니다. 잠시 후에도 계속되면 다시 시도해주세요."
+                }
+                loadingText.text = hint
+                Log.w("Loading", "Loading overlay still visible after timeout")
+            }
+        }, 6000)
     }
 
     /** 로딩 화면 숨기기 */
@@ -200,6 +244,59 @@ class MainActivity : AppCompatActivity() {
         loadingProgressBar.visibility = View.GONE
         loadingText.visibility = View.GONE
         Log.d("Loading", "Loading screen hidden")
+    }
+
+    private fun setupWebViewDiagnostics(webView: WebView) {
+        // WebView 자체가 레이아웃 상에서 실제 크기를 갖는지(0x0인지)와 로드/에러를 확인
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                Log.d("WebViewDiag", "onPageStarted url=$url")
+                if (loadingLayout.visibility == View.VISIBLE) {
+                    loadingText.text = "WebView 로딩 시작...\n$url"
+                }
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                Log.d("WebViewDiag", "onPageFinished url=$url")
+                webView.post {
+                    val w = webView.width
+                    val h = webView.height
+                    Log.d("WebViewDiag", "WebView size=${w}x${h} shown=${webView.isShown} alpha=${webView.alpha}")
+                    if (loadingLayout.visibility == View.VISIBLE) {
+                        loadingText.text = "WebView 로드 완료\nsize=${w}x${h}\n$url"
+                    }
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                val url = request?.url?.toString()
+                val desc = error?.description?.toString()
+                Log.e("WebViewDiag", "onReceivedError url=$url error=$desc")
+                if (loadingLayout.visibility == View.VISIBLE) {
+                    loadingText.text = "WebView 에러\n$url\n$desc"
+                }
+            }
+        }
+
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                val msg = "${consoleMessage.messageLevel()}: ${consoleMessage.message()} " +
+                    "(${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                Log.d("WebViewConsole", msg)
+                // 치명적인 에러가 보이면 로딩 화면에 표시
+                if (loadingLayout.visibility == View.VISIBLE &&
+                    (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR ||
+                        consoleMessage.message().contains("OSMD load error", ignoreCase = true))
+                ) {
+                    loadingText.text = "WebView 콘솔 에러\n${consoleMessage.message()}"
+                }
+                return super.onConsoleMessage(consoleMessage)
+            }
+        }
     }
     
     /**

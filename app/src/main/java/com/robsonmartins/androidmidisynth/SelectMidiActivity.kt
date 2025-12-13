@@ -17,6 +17,13 @@ class SelectMidiActivity : AppCompatActivity() {
                 "musicxml" to "Minuet 도리코 최종 - 01_피아노 - 01 Minuet.musicxml",
                 "mid" to "j - Full score - Flow 1.mid"
             )
+        ),
+        CantamonyAlbum(
+            "ORieding-Op35",
+            mapOf(
+                "musicxml" to "ORieding-Op35 - 01_Part 1 - 01 ORieding-Op35.musicxml",
+                "mid" to "ORieding-Op35 - Full score - ORieding-Op35.mid"
+            )
         )
     )
 

@@ -9,10 +9,18 @@
 
 ### 현재 상태
 - ✅ `activity_main.xml`에 `WebView` (`webViewSheetMusic`) 존재
-- ✅ `MusicXmlParser`와 `MusicXmlAdapter`로 파싱 가능
+- ✅ `MusicXmlParser` 존재 (필요 시 MusicXML 분석/추출에 활용 가능)
 - ✅ Assets에 MusicXML 파일 존재: `Minuet 도리코 최종 - 01_피아노 - 01 Minuet.musicxml`
-- ❌ OSMD 라이브러리 파일 미추가
-- ❌ WebView에 OSMD 초기화 코드 없음
+- ✅ OSMD 라이브러리 파일 존재: `app/src/main/assets/opensheetmusicdisplay.min.js`
+- ✅ OSMD HTML 템플릿 존재: `app/src/main/assets/osmd_template.html`
+- ✅ `MainActivity.kt`에서 WebView 설정 및 `addJavascriptInterface("OSMDAndroid")` + 템플릿 로드까지 구현됨
+
+### 현재 구현 위치(레퍼런스)
+- `app/src/main/java/com/robsonmartins/androidmidisynth/MainActivity.kt`
+  - `testMusicXmlRendering()` : MusicXML을 assets에서 읽고 `OSMDAndroid.getMusicXmlContent()`로 전달
+  - `OSMDInterface.onOSMDReady()` : 렌더 완료 콜백에서 로딩 화면 숨김
+- `app/src/main/assets/osmd_template.html`
+  - `opensheetmusicdisplay.min.js` 로드 후 `OSMDAndroid.getMusicXmlContent()` 호출 → `osmd.load(...).then(osmd.render)`
 
 ### Step 1: OSMD 라이브러리 추가
 ```bash
@@ -23,6 +31,8 @@
 # 2. assets 폴더에 배치
 app/src/main/assets/opensheetmusicdisplay.min.js
 ```
+
+> ✅ 이미 적용됨: 현재 프로젝트에 `opensheetmusicdisplay.min.js`가 포함되어 있습니다.
 
 ### Step 2-1: HTML 템플릿 파일 생성
 `app/src/main/assets/osmd_template.html` 파일을 생성:
@@ -74,56 +84,22 @@ app/src/main/assets/opensheetmusicdisplay.min.js
 </html>
 ```
 
+> ✅ 이미 적용됨: 현재 프로젝트에 `osmd_template.html`가 포함되어 있습니다.
+
 ### Step 2-2: MusicXML 로드 및 OSMD 렌더링 테스트
 ```kotlin
-// MainActivity.kt에 추가할 테스트 코드
-
-/**
- * JavaScript Interface
- */
-class OSMDInterface {
-    private var musicXmlContent: String? = null
-    
-    fun setMusicXmlContent(content: String) {
-        musicXmlContent = content
-    }
-    
-    @JavascriptInterface
-    fun getMusicXmlContent(): String {
-        return musicXmlContent ?: ""
-    }
-    
-    @JavascriptInterface
-    fun onOSMDReady() {
-        // OSMD 렌더링 완료 시 호출
-        Log.d("MainActivity", "OSMD ready")
-    }
-}
-
-private fun testMusicXmlRendering() {
-    val webView = findViewById<WebView>(R.id.webViewSheetMusic)
-    
-    // WebView 설정
-    webView.settings.apply {
-        javaScriptEnabled = true
-        domStorageEnabled = true
-        allowFileAccess = true
-    }
-    
-    // MusicXML 파일 읽기
-    val musicXmlContent = assets.open(musicxmlFileName ?: "").bufferedReader().use { it.readText() }
-    
-    // JavaScript Interface 생성 및 MusicXML 내용 설정
-    val osmdInterface = OSMDInterface()
-    osmdInterface.setMusicXmlContent(musicXmlContent)
-    
-    // JavaScript Interface 추가
-    webView.addJavascriptInterface(osmdInterface, "OSMDAndroid")
-    
-    // HTML 파일 로드
-    webView.loadUrl("file:///android_asset/osmd_template.html")
-}
+// 예시(간략): 실제 프로젝트 구현은 `MainActivity.kt`의 `testMusicXmlRendering()` / `OSMDInterface`를 참고
+//
+// 핵심 포인트:
+// - assets에서 MusicXML 문자열을 읽고
+// - `OSMDAndroid.getMusicXmlContent()`로 WebView(JS)에 제공
+// - 템플릿(`osmd_template.html`)에서 `osmd.load(...).then(osmd.render())`
 ```
+
+#### 현재 구현(레퍼런스)
+- `MainActivity.kt`
+  - `testMusicXmlRendering()` : MusicXML 로드 → `OSMDInterface(mainActivity)` 생성 → `addJavascriptInterface("OSMDAndroid")` → 템플릿 로드
+  - `OSMDInterface.onOSMDReady()` : 로딩 화면 숨김(렌더 완료 콜백)
 
 **참고**: `@JavascriptInterface` 어노테이션을 사용하려면 다음 import가 필요합니다:
 ```kotlin
@@ -138,6 +114,9 @@ import android.webkit.JavascriptInterface
 - [ ] MusicXML 파일이 정상적으로 로드되는가?
 - [ ] OSMD가 악보를 렌더링하는가?
 - [ ] 확대/축소 버튼이 동작하는가?
+- [ ] (중요) 로딩 오버레이(`loadingLayout`)가 계속 떠 있다면, `OSMDAndroid.onOSMDReady()`가 호출되지 않은 것일 수 있음  
+      - 디버그 빌드에서는 로딩 화면을 **길게 눌러 숨김**(WebView가 뒤에서 렌더링되는지 확인용)
+      - Logcat 태그 `WebViewDiag` / `WebViewConsole`로 페이지 로드/콘솔 에러 확인
 
 ---
 
@@ -148,116 +127,37 @@ import android.webkit.JavascriptInterface
 - ✅ `MidiMultiPlayer` 존재 (tick 기반 재생)
 - ✅ `MidiFile` 파싱 가능 (`com.leff.midi` 라이브러리)
 - ✅ Assets에 MIDI 파일 존재: `j - Full score - Flow 1.mid`
-- ❌ MainActivity에서 MIDI 재생 초기화 없음
-- ❌ MIDI 파일을 MidiEvent로 변환하는 코드 없음
+- ✅ `MainActivity.kt`에서 MIDI 로드/파싱/이벤트 변환/플레이어 초기화까지 구현됨 (`loadAndPlayMidi()`)
+- ✅ MIDI 이벤트를 앱 DTO(`com.robsonmartins.androidmidisynth.dto.MidiEvent`)로 변환하는 코드 존재 (`parseMidiFileToEvents()`)
+- ✅ 재생/정지/BPM 조절 UI 연동 존재 (`setupPlaybackControls()`)
 
 ### Step 1: MIDI 파일 파싱 및 이벤트 변환
 ```kotlin
-// MainActivity.kt에 추가할 테스트 코드
-private fun testMidiPlayback() {
-    // 1. SynthManager 초기화
-    val synthManager = SynthManager.getInstance(applicationContext)
-    
-    // 2. MIDI 파일 로드
-    val midiFileName = selectedAlbum?.albumAsset?.get("mid")
-    val inputStream = assets.open(midiFileName ?: "")
-    val midiFile = MidiFile(inputStream)
-    
-    // 3. MIDI 이벤트 파싱
-    val events = parseMidiFileToEvents(midiFile)
-    
-    // 4. MidiMultiPlayer에 이벤트 추가
-    val midiPlayer = MidiMultiPlayer(synthManager)
-    events.forEachIndexed { trackIndex, trackEvents ->
-        midiPlayer.addTrack(trackEvents, trackIndex)
-    }
-    
-    // 5. 재생 테스트
-    midiPlayer.setBPM(120.0)
-    midiPlayer.startAll()
-}
-
-/**
- * MIDI 파일을 MidiEvent 리스트로 변환
- */
-private fun parseMidiFileToEvents(midiFile: MidiFile): Map<Int, List<MidiEvent>> {
-    val trackEventsMap = mutableMapOf<Int, MutableList<MidiEvent>>()
-    
-    midiFile.tracks.forEachIndexed { trackIndex, track ->
-        val events = mutableListOf<MidiEvent>()
-        
-        track.events.forEach { midiEvent ->
-            when (midiEvent) {
-                is NoteOn -> {
-                    if (midiEvent.velocity > 0) {
-                        events.add(
-                            MidiEvent(
-                                tick = midiEvent.tick,
-                                note = midiEvent.noteValue,
-                                velocity = midiEvent.velocity,
-                                isNoteOn = true
-                            )
-                        )
-                    } else {
-                        // velocity 0은 NoteOff
-                        events.add(
-                            MidiEvent(
-                                tick = midiEvent.tick,
-                                note = midiEvent.noteValue,
-                                velocity = 0,
-                                isNoteOn = false
-                            )
-                        )
-                    }
-                }
-                is NoteOff -> {
-                    events.add(
-                        MidiEvent(
-                            tick = midiEvent.tick,
-                            note = midiEvent.noteValue,
-                            velocity = 0,
-                            isNoteOn = false
-                        )
-                    )
-                }
-            }
-        }
-        
-        trackEventsMap[trackIndex] = events
-    }
-    
-    return trackEventsMap
-}
+// 예시(간략): 실제 프로젝트 구현은 `MainActivity.kt`의 `loadAndPlayMidi()` / `parseMidiFileToEvents()`를 참고
+//
+// 핵심 포인트:
+// - assets에서 MIDI 로드 → `com.leff.midi.MidiFile` 파싱
+// - `parseMidiFileToEvents()`로 앱 DTO(`com.robsonmartins.androidmidisynth.dto.MidiEvent`)로 변환
+// - `SynthManager(this)` 생성 후 `loadSoundFont(...)`
+// - `MidiMultiPlayer(synthManager)`에 트랙별 이벤트 추가 후 `setBPM(...)`
 ```
+
+> 참고: 코드베이스에는 `com.leff.midi.event.MidiEvent`(라이브러리)와 `com.robsonmartins.androidmidisynth.dto.MidiEvent`(앱 DTO)가 공존합니다. 문서/코드에서 타입이 헷갈리지 않게 패키지명을 함께 표기하는 것을 권장합니다.
+
+#### 현재 구현(레퍼런스)
+- `MainActivity.kt`
+  - `loadAndPlayMidi()` : MIDI 로드/템포 추출/이벤트 변환/플레이어 준비/컨트롤 연동
+  - `parseMidiFileToEvents(midiFile: com.leff.midi.MidiFile)` : NoteOn/NoteOff → DTO 변환(트랙 인덱스 포함)
+- `app/src/main/java/com/robsonmartins/androidmidisynth/util/MidiMultiPlayer.kt`
+  - `addTrack()`, `startAll()`, `stopAll()`, `seekTo()`, `getCurrentTick()/getTotalTicks()`
 
 ### Step 2: 재생 컨트롤 연동
 ```kotlin
-// activity_main.xml의 버튼들과 연동
-private fun setupPlaybackControls() {
-    val btnPlay = findViewById<Button>(R.id.btnPlayAll)
-    val btnStop = findViewById<Button>(R.id.btnStopAll)
-    val seekBar = findViewById<SeekBar>(R.id.seekBarMeasure)
-    
-    btnPlay.setOnClickListener {
-        if (midiPlayer.isPlaying()) {
-            midiPlayer.stopAll()
-            btnPlay.text = "▶"
-        } else {
-            midiPlayer.startAll()
-            btnPlay.text = "⏸"
-            startPlaybackTracking() // 재생 위치 추적 시작
-        }
-    }
-    
-    btnStop.setOnClickListener {
-        midiPlayer.stopAll()
-        midiPlayer.reset()
-        btnPlay.text = "▶"
-    }
-    
-    // SeekBar 업데이트
-    // ...
-}
+// 예시(개념): 재생 버튼에서 start/stop 토글 + stop은 reset까지 수행
+// 현재 프로젝트 구현은 `MainActivity.kt`의 `setupPlaybackControls()` 참고
+// - 재생/정지 버튼
+// - BPM SeekBar(사용자 조절 시 `midiPlayer.setBPM(...)`)
+// - 재생 위치 추적(startPlaybackTracking)은 아직 TODO로 남아있음
 ```
 
 ### 확인 항목
@@ -367,20 +267,24 @@ object MusicXmlMidiMapper {
             }
             
             // 마디 길이 계산 (박자 기준)
-            val measureLengthInBeats = measureTimeSig.first.toDouble()
-            val ticksPerBeat = midiFile.resolution
-            val measureLengthInTicks = (measureLengthInBeats * ticksPerBeat).toLong()
+            // - 일반적으로 ticksPerBeat(PPQ)는 midiFile.resolution
+            // - 마디 길이(beat)는 timeSignature에 따라 달라짐 (예: 6/8은 6 * (4/8) = 3 quarter-notes)
+            val (num, den) = measureTimeSig
+            val ticksPerQuarter = midiFile.resolution
+            val quartersPerBeatUnit = 4.0 / den.toDouble()
+            val measureLengthInQuarters = num.toDouble() * quartersPerBeatUnit
+            val measureLengthInTicks = (measureLengthInQuarters * ticksPerQuarter).toLong()
             
             // 템포 변경 확인
-            val tempoChange = tempoEvents.find { it.tick <= currentTick + measureLengthInTicks }
-            if (tempoChange != null) {
-                currentBPM = tempoChange.bpm
-            }
+            // - 현재 tick 이전(또는 같은 tick)에 발생한 마지막 템포를 기준으로 삼는 편이 안전함
+            val tempoChange = tempoEvents.lastOrNull { it.tick <= currentTick }
+            if (tempoChange != null) currentBPM = tempoChange.bpm
             
             // 시간 계산 (ms)
-            val ticksPerMs = (60000.0 / (currentBPM * ticksPerBeat))
-            val startTimeMs = (currentTick * ticksPerMs).toLong()
-            val endTimeMs = ((currentTick + measureLengthInTicks) * ticksPerMs).toLong()
+            // msPerTick = 60000 / (BPM * ticksPerQuarter)
+            val msPerTick = 60000.0 / (currentBPM * ticksPerQuarter)
+            val startTimeMs = (currentTick * msPerTick).toLong()
+            val endTimeMs = ((currentTick + measureLengthInTicks) * msPerTick).toLong()
             
             mappings.add(
                 MeasureTimeMapping(
@@ -534,8 +438,10 @@ function highlightMeasure(measureNumber) {
     // 이전 하이라이트 제거
     clearAllHighlights();
     
-    // 해당 마디의 SVG 요소 찾기
-    // OSMD는 마디별로 그룹화되어 있으므로 data-measure 속성으로 찾기
+    // ⚠️ 주의: OSMD 기본 출력 SVG에는 `data-measure` 속성이 보장되지 않습니다.
+    // 구현 옵션:
+    // 1) OSMD Cursor API를 사용해 재생 위치에 맞춰 진행(권장)
+    // 2) 렌더된 SVG 구조를 분석해 마디 그룹(<g>)에 커스텀 속성을 부여한 뒤 선택
     const measureElements = document.querySelectorAll(`[data-measure="${measureNumber}"]`);
     
     measureElements.forEach(element => {
@@ -563,6 +469,10 @@ function addMeasureAttributes() {
     // 일반적으로 각 마디는 <g> 태그로 그룹화됨
 }
 ```
+
+### 현재 코드 기준 체크 포인트(중요)
+- `MidiMultiPlayer`는 현재 `msPerTick = 60000 / (bpm * 480)`로 **PPQ=480을 하드코딩**하고 있습니다.  
+  MIDI 파일의 `midiFile.resolution`과 다를 수 있으므로, 동기화/정확한 재생을 목표로 하면 **resolution을 주입**하도록 구조 변경이 필요합니다.
 
 ### 구현 우선순위
 
