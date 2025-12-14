@@ -4,7 +4,7 @@ import com.tickaroo.tikxml.annotation.Attribute
 import com.tickaroo.tikxml.annotation.Element
 import com.tickaroo.tikxml.annotation.Xml
 
-@Xml
+@Xml(name = "score-partwise")
 data class ScorePartWise(
     @Attribute
         var version: String?,
@@ -12,9 +12,9 @@ data class ScorePartWise(
     @Element
         var identification: Identification?,
 
-    @Element
+    @Element(name = "part-list")
         var partList: PartList?,
 
-    @Element
+    @Element(name = "part")
         var parts: List<Part>?
 )

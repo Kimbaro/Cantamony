@@ -7,6 +7,19 @@
         #osmdContainer { width: 100%; height: 100vh; }
         /* OSMD 기본 SVG(선/텍스트)가 검정색이라, 배경이 검정이면 안 보일 수 있어 흰 배경 강제 */
         #osmdContainer, #osmdContainer svg { background: #fff; }
+
+        /* === Cantamony highlight (SVG) === */
+        .cantamony-highlight path,
+        .cantamony-highlight rect,
+        .cantamony-highlight line,
+        .cantamony-highlight polygon,
+        .cantamony-highlight polyline {
+            stroke: #1db954 !important;
+            fill: #1db954 !important;
+        }
+        .cantamony-highlight text {
+            fill: #1db954 !important;
+        }
     </style>
 </head>
 <body>
@@ -19,6 +32,514 @@
             drawTitle: true,
             autoResize: true
         });
+
+        /* === Cantamony: measure indexing === */
+        var __cantamonyMeasureEls = [];
+        var __cantamonyOverlayRect = null;
+        var __cantamonyOverlayDiv = null;
+        var __cantamonyStyledNodes = [];
+        var __cantamonyDebugLabel = null;
+        var __cantamonyLastHighlightIndex = null;
+        var __cantamonyLastHighlightMode = "line"; // "line" | "measure"
+        var __CANTAMONY_NULL = "__CANTAMONY_NULL__";
+
+        function __cantamonyPruneOldSvgs() {
+            // OSMD가 render/resize 과정에서 SVG를 여러 개 남겨두는 경우가 있어
+            // 잔상(이전 하이라이트 포함)을 막기 위해 최신 1개만 남긴다.
+            try {
+                var svgs = document.querySelectorAll("#osmdContainer svg");
+                if (!svgs || svgs.length <= 1) return;
+                for (var i = 0; i < svgs.length - 1; i++) {
+                    if (svgs[i] && svgs[i].parentNode) {
+                        svgs[i].parentNode.removeChild(svgs[i]);
+                    }
+                }
+                console.log("Cantamony pruned old svgs, kept=1 removed=" + (svgs.length - 1));
+            } catch (e) {}
+        }
+
+        function __cantamonyForceRepaint() {
+            // Android WebView에서 SVG 스타일 변경이 바로 페인트되지 않는 경우가 있어 강제 리페인트 트릭 사용
+            try {
+                var svg = document.querySelector("#osmdContainer svg");
+                if (!svg) return;
+                var old = svg.style.opacity;
+                svg.style.opacity = "0.999";
+                requestAnimationFrame(function() {
+                    svg.style.opacity = old || "1";
+                });
+            } catch (e) {}
+        }
+
+        function __cantamonySafeBBox(el) {
+            try { return el.getBBox(); } catch (e) { return null; }
+        }
+
+        function __cantamonyGetLatestSvg() {
+            var svgs = document.querySelectorAll("#osmdContainer svg");
+            if (!svgs || svgs.length === 0) return null;
+            // OSMD가 렌더/리사이즈 중 SVG를 교체/추가하는 경우가 있어 "마지막"을 사용
+            return svgs[svgs.length - 1];
+        }
+
+        function __cantamonyCollectMeasureElements() {
+            var svg = __cantamonyGetLatestSvg();
+            if (!svg) return [];
+
+            function hasRenderableDesc(el) {
+                // defs 내부는 렌더되지 않으므로 제외하고, 실제로 그려질 가능성이 있는 자식이 있는지 확인
+                var nodes = el.querySelectorAll("use, path, rect, line, polygon, polyline, text");
+                for (var i = 0; i < nodes.length; i++) {
+                    var n = nodes[i];
+                    if (n.closest && n.closest("defs")) continue;
+                    // display/visibility 기반 필터(가능하면)
+                    try {
+                        var cs = window.getComputedStyle(n);
+                        if (cs && (cs.display === "none" || cs.visibility === "hidden")) continue;
+                    } catch (e) {}
+                    return true;
+                }
+                return false;
+            }
+
+            // 1) 우선순위 셀렉터(버전에 따라 달라질 수 있음)
+            var selectors = [
+                "g.vf-measure",
+                "g.measure",
+                "g[id*='measure']",
+                "g[class*='measure']"
+            ];
+
+            for (var s = 0; s < selectors.length; s++) {
+                var cand = Array.from(svg.querySelectorAll(selectors[s]));
+                // ⚠️ Android WebView에서는 SVG getBBox/getBoundingClientRect가 0으로 나올 수 있어
+                // bbox 기반 필터 대신 "defs 내부 제외 + 실제 렌더 가능한 자식 존재"로 필터링
+                cand = cand.filter(function(el) {
+                    if (el.closest && el.closest("defs")) return false; // 화면에 직접 그려지지 않는 템플릿 제외
+                    return hasRenderableDesc(el);
+                });
+                if (cand.length >= 2) return cand;
+            }
+
+            // 2) fallback: bbox가 “마디처럼 큰” 그룹을 모아서 좌->우, 상->하 정렬
+            var all = Array.from(svg.querySelectorAll("g"));
+            var big = all.map(function(el) {
+                var bb = __cantamonySafeBBox(el);
+                return { el: el, bb: bb };
+            }).filter(function(x) {
+                if (x.el.closest && x.el.closest("defs")) return false;
+                // bbox가 0인 환경이 있으므로 bbox 조건을 완화하고 렌더 자식 존재로 1차 필터
+                if (!hasRenderableDesc(x.el)) return false;
+                return true;
+            });
+
+            big.sort(function(a, b) {
+                // y 우선, 다음 x (시스템(줄)별로 y가 크게 달라짐)
+                if (Math.abs(a.bb.y - b.bb.y) > 10) return a.bb.y - b.bb.y;
+                return a.bb.x - b.bb.x;
+            });
+
+            return big.map(function(x) { return x.el; });
+        }
+
+        function indexMeasures() {
+            __cantamonyPruneOldSvgs();
+            __cantamonyMeasureEls = __cantamonyCollectMeasureElements();
+            __cantamonyMeasureEls.forEach(function(el, i) {
+                el.setAttribute("data-cantamony-measure-index", String(i));
+            });
+            console.log("Cantamony measures indexed:", __cantamonyMeasureEls.length);
+            try {
+                var svg = __cantamonyGetLatestSvg();
+                if (svg) {
+                    console.log("Cantamony selector counts:",
+                        "vf-measure=", svg.querySelectorAll("g.vf-measure").length,
+                        "g.measure=", svg.querySelectorAll("g.measure").length,
+                        "id*measure=", svg.querySelectorAll("g[id*='measure']").length,
+                        "class*measure=", svg.querySelectorAll("g[class*='measure']").length,
+                        "stave=", svg.querySelectorAll("g[class*='stave'], g.vf-stave").length,
+                        "system=", svg.querySelectorAll("g[class*='system']").length
+                    );
+                }
+            } catch (e) {}
+            // 디버깅용: 앞의 몇 개 bbox를 출력
+            for (var i = 0; i < Math.min(5, __cantamonyMeasureEls.length); i++) {
+                var bb = __cantamonySafeBBox(__cantamonyMeasureEls[i]);
+                console.log("Cantamony measure[", i, "] bbox=", bb);
+            }
+        }
+
+        function clearMeasureHighlight() {
+            __cantamonyMeasureEls.forEach(function(el) {
+                el.classList.remove("cantamony-highlight");
+                try { el.style.filter = ""; } catch (e) {}
+            });
+            // 인라인 스타일로 강제했던 값 제거
+            if (__cantamonyStyledNodes && __cantamonyStyledNodes.length > 0) {
+                for (var i = 0; i < __cantamonyStyledNodes.length; i++) {
+                    var n = __cantamonyStyledNodes[i];
+                    try {
+                        // 원복: 원래 값이 저장되어 있으면 복구
+                        var os = n.getAttribute("data-cantamony-orig-stroke");
+                        var of = n.getAttribute("data-cantamony-orig-fill");
+                        var oo = n.getAttribute("data-cantamony-orig-opacity");
+                        var osw = n.getAttribute("data-cantamony-orig-stroke-width");
+                        if (os !== null) { if (os === __CANTAMONY_NULL) n.removeAttribute("stroke"); else n.setAttribute("stroke", os); }
+                        if (of !== null) { if (of === __CANTAMONY_NULL) n.removeAttribute("fill"); else n.setAttribute("fill", of); }
+                        if (oo !== null) { if (oo === __CANTAMONY_NULL) n.removeAttribute("opacity"); else n.setAttribute("opacity", oo); }
+                        if (osw !== null) { if (osw === __CANTAMONY_NULL) n.removeAttribute("stroke-width"); else n.setAttribute("stroke-width", osw); }
+                        n.removeAttribute("data-cantamony-orig-stroke");
+                        n.removeAttribute("data-cantamony-orig-fill");
+                        n.removeAttribute("data-cantamony-orig-opacity");
+                        n.removeAttribute("data-cantamony-orig-stroke-width");
+                        n.style.removeProperty("stroke");
+                        n.style.removeProperty("fill");
+                        n.style.removeProperty("opacity");
+                        n.style.removeProperty("filter");
+                        n.style.removeProperty("stroke-width");
+                    } catch (e) {}
+                }
+            }
+            __cantamonyStyledNodes = [];
+            if (__cantamonyOverlayRect && __cantamonyOverlayRect.parentNode) {
+                __cantamonyOverlayRect.parentNode.removeChild(__cantamonyOverlayRect);
+            }
+            __cantamonyOverlayRect = null;
+            if (__cantamonyOverlayDiv && __cantamonyOverlayDiv.parentNode) {
+                __cantamonyOverlayDiv.parentNode.removeChild(__cantamonyOverlayDiv);
+            }
+            __cantamonyOverlayDiv = null;
+        }
+
+        function __cantamonyEnsureDebugLabel() {
+            if (__cantamonyDebugLabel) return;
+            var d = document.createElement("div");
+            d.style.position = "fixed";
+            d.style.left = "8px";
+            d.style.top = "8px";
+            d.style.zIndex = "1000000";
+            d.style.padding = "6px 10px";
+            d.style.borderRadius = "8px";
+            d.style.background = "rgba(0,0,0,0.6)";
+            d.style.color = "#fff";
+            d.style.fontSize = "12px";
+            d.style.fontFamily = "monospace";
+            d.style.pointerEvents = "none";
+            d.textContent = "Cantamony: -";
+            document.body.appendChild(d);
+            __cantamonyDebugLabel = d;
+        }
+
+        function __cantamonyForceHighlightStyles(groupEl) {
+            // Android WebView에서 SVG geometry API들이 0을 반환하는 케이스가 있어,
+            // "보이는 것"에 집중: 실제 렌더 요소들에 인라인 스타일(!important)로 색을 강제한다.
+            function applyStyleToNode(n) {
+                try {
+                    var tag = (n.tagName || "").toLowerCase();
+                    if (n.closest && n.closest("defs")) return; // defs 내부 제외(보이지 않음)
+
+                    // 원복을 위해 원래 attribute 값을 1회 저장
+                    if (!n.hasAttribute("data-cantamony-orig-stroke")) {
+                        var os = n.getAttribute("stroke");
+                        var of = n.getAttribute("fill");
+                        var oo = n.getAttribute("opacity");
+                        var osw = n.getAttribute("stroke-width");
+                        n.setAttribute("data-cantamony-orig-stroke", os === null ? __CANTAMONY_NULL : os);
+                        n.setAttribute("data-cantamony-orig-fill", of === null ? __CANTAMONY_NULL : of);
+                        n.setAttribute("data-cantamony-orig-opacity", oo === null ? __CANTAMONY_NULL : oo);
+                        n.setAttribute("data-cantamony-orig-stroke-width", osw === null ? __CANTAMONY_NULL : osw);
+                    }
+
+                    if (tag === "text") {
+                        // attribute + style 모두 강제(일부 WebView는 style 적용이 불안정)
+                        n.setAttribute("fill", "#1db954");
+                        n.style.setProperty("fill", "#1db954", "important");
+                    } else {
+                        n.setAttribute("stroke", "#1db954");
+                        n.setAttribute("fill", "#1db954");
+                        n.setAttribute("opacity", "0.95");
+                        n.setAttribute("stroke-width", "2");
+                        n.style.setProperty("stroke", "#1db954", "important");
+                        n.style.setProperty("fill", "#1db954", "important");
+                        n.style.setProperty("opacity", "0.95", "important");
+                        // 선이 너무 얇아 티가 안 나는 경우 대비
+                        n.style.setProperty("stroke-width", "2", "important");
+                    }
+                    // 글로우(지원하는 WebView에서만 적용)
+                    n.style.setProperty("filter", "drop-shadow(0px 0px 4px rgba(29,185,84,0.85))", "important");
+                    __cantamonyStyledNodes.push(n);
+                } catch (e) {}
+            }
+
+            function resolveUseTarget(useEl) {
+                try {
+                    // href 우선, 없으면 xlink:href
+                    var href = useEl.getAttribute("href") || useEl.getAttribute("xlink:href");
+                    if (!href || href[0] !== "#") return null;
+                    var id = href.substring(1);
+                    return document.getElementById(id);
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            var nodes = groupEl.querySelectorAll("path, rect, line, polygon, polyline, text, use");
+            var limit = Math.min(nodes.length, 600);
+            for (var i = 0; i < limit; i++) {
+                var n = nodes[i];
+                try {
+                    var tag = (n.tagName || "").toLowerCase();
+                    if (tag === "use") {
+                        // <use> 자체 + 참조 타깃(defs에 있음)을 함께 스타일링
+                        applyStyleToNode(n);
+                        var target = resolveUseTarget(n);
+                        if (target) {
+                            applyStyleToNode(target);
+                            // 타깃 내부의 실제 도형까지 스타일 적용
+                            var inner = target.querySelectorAll("path, rect, line, polygon, polyline, text");
+                            var innerLimit = Math.min(inner.length, 300);
+                            for (var k = 0; k < innerLimit; k++) {
+                                applyStyleToNode(inner[k]);
+                            }
+                        }
+                    } else {
+                        applyStyleToNode(n);
+                    }
+                } catch (e) {}
+            }
+            // 디버깅: 어떤 태그들을 스타일링했는지 같이 찍기
+            try {
+                var tags = {};
+                var inDefsCount = 0;
+                for (var j = 0; j < Math.min(nodes.length, 60); j++) {
+                    var t = (nodes[j].tagName || "unknown").toLowerCase();
+                    tags[t] = (tags[t] || 0) + 1;
+                    if (nodes[j].closest && nodes[j].closest("defs")) inDefsCount++;
+                }
+                console.log("Cantamony force-highlight styled nodes:", nodes.length, "used:", limit, "tags(sample):", JSON.stringify(tags), "inDefs(sample):", inDefsCount);
+            } catch (e) {
+                console.log("Cantamony force-highlight styled nodes:", nodes.length, "used:", limit);
+            }
+
+            __cantamonyForceRepaint();
+        }
+
+        // Android에서 호출: 현재 인덱싱된 마디 개수
+        function getCantamonyMeasureCount() {
+            return __cantamonyMeasureEls.length;
+        }
+
+        // Android에서 호출: 0-based index
+        function highlightMeasureIndex(index) {
+            clearMeasureHighlight();
+            var i = Number(index);
+            var el = __cantamonyMeasureEls[i];
+            if (!el) {
+                console.warn("Cantamony highlightMeasureIndex: not found index=", index, "size=", __cantamonyMeasureEls.length);
+                return;
+            }
+            __cantamonyLastHighlightIndex = i;
+            __cantamonyLastHighlightMode = "measure";
+
+            // 구조 진단: 어떤 엘리먼트를 잡고 있는지 확인
+            try {
+                var svg = __cantamonyGetLatestSvg();
+                // OSMD가 SVG를 교체한 경우: 캐시된 엘리먼트가 detach되어 inSvg=false가 될 수 있음
+                if (svg && (!el.isConnected || !svg.contains(el))) {
+                    console.warn("Cantamony highlight: cached element not in latest svg; reindexing");
+                    indexMeasures();
+                    el = __cantamonyMeasureEls[i];
+                }
+                var chain = [];
+                var cur = el;
+                var depth = 0;
+                while (cur && depth < 8) {
+                    var tag = (cur.tagName || "").toLowerCase();
+                    var id = cur.id ? ("#" + cur.id) : "";
+                    var cls = "";
+                    try {
+                        cls = cur.getAttribute && cur.getAttribute("class") ? ("." + cur.getAttribute("class").split(/\s+/).slice(0,3).join(".")) : "";
+                    } catch (e) {}
+                    chain.push(tag + id + cls);
+                    cur = cur.parentNode;
+                    depth++;
+                }
+                console.log("Cantamony highlight target:",
+                    "index=", i,
+                    "inSvg=", svg ? (el && svg.contains(el)) : false,
+                    "chain=", chain.join(" <- ")
+                );
+            } catch (e) {}
+
+            el.classList.add("cantamony-highlight");
+            // 보이는 효과를 확실히: 글로우
+            try {
+                el.style.filter = "drop-shadow(0px 0px 6px rgba(29,185,84,0.95))";
+            } catch (e) {}
+
+            __cantamonyEnsureDebugLabel();
+            try { __cantamonyDebugLabel.textContent = "Cantamony: measureIndex=" + i + " / " + __cantamonyMeasureEls.length; } catch (e) {}
+
+            // geometry가 0으로 나와도 색 변경은 정상 적용되므로 먼저 강제 하이라이트를 적용
+            __cantamonyForceHighlightStyles(el);
+            __cantamonyForceRepaint();
+
+            // 화면 밖으로 나가면 추적(자동 스크롤)
+            try { el.scrollIntoView({ behavior: "auto", block: "center" }); } catch (e) {}
+
+            // 확실한 시각화(권장): 화면 좌표 기반 HTML 오버레이 테두리
+            // SVG 내부 transform/clip 영향과 무관하게 "보이는 위치"에 박스를 그릴 수 있음
+            try {
+                // 먼저 스크롤을 "즉시" 맞추고, 다음 프레임에서 rect를 계산
+                try {
+                    el.scrollIntoView({ behavior: "auto", block: "center" });
+                } catch (e) {}
+
+                requestAnimationFrame(function() {
+                    // Android WebView에서는 <g>의 rect 계산이 0으로 나오는 경우가 있어,
+                    // 실제로 렌더되는 자식 요소들의 client rect를 합쳐서 박스를 만든다.
+                    function rectUnion(a, b) {
+                        if (!a) return b;
+                        if (!b) return a;
+                        var left = Math.min(a.left, b.left);
+                        var top = Math.min(a.top, b.top);
+                        var right = Math.max(a.left + a.width, b.left + b.width);
+                        var bottom = Math.max(a.top + a.height, b.top + b.height);
+                        return { left: left, top: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+                    }
+
+                    var r = el.getBoundingClientRect();
+                    var rectObj = { left: r.left, top: r.top, width: r.width, height: r.height, method: "group-clientRect" };
+
+                    if (!r || r.width === 0 || r.height === 0) {
+                        var union = null;
+                        // 마디 그룹 안의 실제 도형/텍스트들
+                        var nodes = el.querySelectorAll("path, rect, line, polygon, polyline, text");
+                        var limit = Math.min(nodes.length, 250); // 성능 보호
+                        for (var k = 0; k < limit; k++) {
+                            var nr = nodes[k].getBoundingClientRect();
+                            if (nr && nr.width > 0 && nr.height > 0) {
+                                union = rectUnion(union, { left: nr.left, top: nr.top, width: nr.width, height: nr.height });
+                            }
+                        }
+                        if (union) {
+                            rectObj = { left: union.left, top: union.top, width: union.width, height: union.height, method: "children-clientRects", childCount: nodes.length, used: limit };
+                        } else {
+                            // 마지막 fallback: bbox 로그만 남김
+                            var bb = __cantamonySafeBBox(el);
+                            rectObj = { left: 0, top: 0, width: 0, height: 0, method: "children-clientRects-failed", childCount: nodes.length, bb: bb ? { x: bb.x, y: bb.y, width: bb.width, height: bb.height } : null };
+                        }
+                    }
+
+                    console.log("Cantamony highlight index=" + i + " inDefs=" + (!!(el.closest && el.closest("defs"))) + " rect=" + JSON.stringify(rectObj));
+
+                    var div = document.createElement("div");
+                    div.style.position = "fixed";
+                    div.style.left = rectObj.left + "px";
+                    div.style.top = rectObj.top + "px";
+                    div.style.width = rectObj.width + "px";
+                    div.style.height = rectObj.height + "px";
+                    div.style.border = "3px solid #1db954";
+                    div.style.boxSizing = "border-box";
+                    div.style.pointerEvents = "none";
+                    div.style.zIndex = "999999";
+                    div.style.borderRadius = "4px";
+                    // 살짝 채움(선만 안 보이는 경우 대비)
+                    div.style.background = "rgba(29,185,84,0.10)";
+                    document.body.appendChild(div);
+                    __cantamonyOverlayDiv = div;
+                    console.log("Cantamony overlay DIV appended");
+                });
+            } catch (e) {
+                console.warn("Cantamony overlay DIV failed:", e);
+            }
+        }
+
+        function __cantamonyFindStafflineGroup(el) {
+            var cur = el;
+            var depth = 0;
+            while (cur && depth < 14) {
+                try {
+                    var tag = (cur.tagName || "").toLowerCase();
+                    if (tag === "g") {
+                        var id = cur.id || "";
+                        var cls = (cur.getAttribute && cur.getAttribute("class")) ? cur.getAttribute("class") : "";
+                        var idl = id.toLowerCase();
+                        var cl = cls.toLowerCase();
+                        if (idl.indexOf("staffline") >= 0 || cl.indexOf("staffline") >= 0) return cur;
+                        // 일부 버전/구조 fallback
+                        if (idl.indexOf("staff") >= 0 && (cl.indexOf("line") >= 0 || cl.indexOf("staff") >= 0)) return cur;
+                    }
+                } catch (e) {}
+                cur = cur.parentNode;
+                depth++;
+            }
+            return null;
+        }
+
+        // 마디 index를 받지만 "현재 화면 기준 한 줄(staffline)" 전체를 하이라이트
+        function highlightLineOfMeasureIndex(index) {
+            clearMeasureHighlight();
+            var i = Number(index);
+            if (!__cantamonyMeasureEls || __cantamonyMeasureEls.length === 0) {
+                indexMeasures();
+            }
+            var el = __cantamonyMeasureEls[i];
+            if (!el) {
+                console.warn("Cantamony highlightLineOfMeasureIndex: not found index=", index, "size=", __cantamonyMeasureEls.length);
+                return;
+            }
+            __cantamonyLastHighlightIndex = i;
+            __cantamonyLastHighlightMode = "line";
+
+            // 최신 svg에 속하지 않으면 재인덱싱
+            try {
+                var svg = __cantamonyGetLatestSvg();
+                if (svg && (!el.isConnected || !svg.contains(el))) {
+                    console.warn("Cantamony highlightLine: cached element not in latest svg; reindexing");
+                    indexMeasures();
+                    el = __cantamonyMeasureEls[i];
+                }
+            } catch (e) {}
+
+            __cantamonyEnsureDebugLabel();
+            try { __cantamonyDebugLabel.textContent = "Cantamony: lineIndex=" + i + " / " + __cantamonyMeasureEls.length; } catch (e) {}
+
+            var lineGroup = __cantamonyFindStafflineGroup(el) || el;
+            __cantamonyForceHighlightStyles(lineGroup);
+            __cantamonyForceRepaint();
+
+            // 화면 밖으로 나가면 추적(자동 스크롤): 줄 단위로 중앙 정렬
+            try { lineGroup.scrollIntoView({ behavior: "auto", block: "center" }); } catch (e) {}
+        }
+
+        // 확대/축소 등으로 osmd.render()가 다시 호출된 이후에 실행:
+        // - 최신 SVG를 기준으로 재인덱싱
+        // - 마지막 하이라이트 index가 있으면 재하이라이트
+        function cantamonyAfterRender() {
+            try {
+                // 줌/리렌더 후 잔상 방지: 먼저 무조건 클리어
+                clearMeasureHighlight();
+                __cantamonyPruneOldSvgs();
+                indexMeasures();
+                if (__cantamonyLastHighlightIndex !== null) {
+                    if (__cantamonyLastHighlightMode === "line") {
+                        highlightLineOfMeasureIndex(__cantamonyLastHighlightIndex);
+                    } else {
+                        highlightMeasureIndex(__cantamonyLastHighlightIndex);
+                    }
+                }
+            } catch (e) {
+                console.warn("Cantamony cantamonyAfterRender failed:", e);
+            }
+        }
+
+        // osmd.render() 직전에 호출(선택): 잔상/누적 하이라이트 방지
+        function cantamonyBeforeRender() {
+            try {
+                clearMeasureHighlight();
+            } catch (e) {}
+        }
         
         // Android에서 MusicXML 내용을 받아옴
         function loadMusicXml() {
@@ -28,6 +549,10 @@
                     .then(function() {
                         console.log("OSMD loaded successfully");
                         osmd.render();
+                        // render 직후 DOM을 인덱싱 (B안 핵심)
+                        // OSMD가 내부적으로 한 번 더 렌더/리사이즈하며 SVG를 교체할 수 있어 지연 인덱싱도 함께 수행
+                        indexMeasures();
+                        setTimeout(function() { indexMeasures(); }, 0);
                         if (typeof OSMDAndroid !== 'undefined' && OSMDAndroid.onOSMDReady) {
                             OSMDAndroid.onOSMDReady();
                         }

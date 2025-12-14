@@ -1,5 +1,6 @@
 package com.robsonmartins.androidmidisynth.util
 
+import android.os.SystemClock
 import com.robsonmartins.androidmidisynth.SynthManager
 import com.robsonmartins.androidmidisynth.dto.MidiEvent
 import kotlin.concurrent.thread
@@ -10,6 +11,7 @@ class MidiMultiPlayer(private val synth: SynthManager) {
     private var playThread: Thread? = null
     private var isPlaying = false
     private var bpm = 120.0
+    private var ticksPerQuarter: Int = 480 // MIDI PPQ (기본값)
     private var muteTracks = mutableMapOf<Int, Boolean>() // 트랙별 mute 상태
     
     // 재생 위치 추적
@@ -17,6 +19,12 @@ class MidiMultiPlayer(private val synth: SynthManager) {
     private var currentTick: Long = 0L
     private var totalTicks: Long = 0L
     private var currentEventIndex: Int = 0
+
+    // 절대 시간 기반 스케줄링 기준점
+    @Volatile
+    private var baseRealtimeMs: Long = 0L
+    @Volatile
+    private var baseStartTick: Long = 0L
     
     // Seek 기능을 위한 플래그
     @Volatile
@@ -31,6 +39,11 @@ class MidiMultiPlayer(private val synth: SynthManager) {
     
     fun getCurrentTick(): Long = currentTick
     fun getTotalTicks(): Long = totalTicks
+
+    /** MIDI PPQ(resolution) 설정. midiFile.resolution 값을 주입해야 정확한 타이밍이 나옵니다. */
+    fun setTicksPerQuarter(ppq: Int) {
+        ticksPerQuarter = ppq.coerceAtLeast(1)
+    }
 
     /** 트랙 이벤트 추가 (trackIndex 기준) */
     fun addTrack(events: List<MidiEvent>, trackIndex: Int) {
@@ -63,7 +76,6 @@ class MidiMultiPlayer(private val synth: SynthManager) {
         isPlaying = true
         activeNotes.clear() // 재생 시작 시 초기화
         playThread = thread {
-            var lastTick: Long
             var eventIndex: Int
             
             // Seek 처리: 현재 위치보다 앞으로 이동한 경우
@@ -73,23 +85,17 @@ class MidiMultiPlayer(private val synth: SynthManager) {
                 // seekTick 이후의 첫 이벤트 찾기
                 eventIndex = allEvents.indexOfFirst { it.tick >= seekTick }
                     .takeIf { it >= 0 } ?: allEvents.size
-                lastTick = if (eventIndex > 0) {
-                    allEvents[eventIndex - 1].tick
-                } else {
-                    seekTick
-                }
                 currentTick = seekTick
                 currentEventIndex = eventIndex
                 seekToTick = null
             } else {
                 // Seek가 없으면 현재 위치에서 시작 (또는 처음부터)
-                lastTick = currentTick
                 eventIndex = currentEventIndex
-                // 처음 시작하는 경우 0으로 초기화
-                if (eventIndex == 0 && currentTick == 0L) {
-                    lastTick = 0L
-                }
             }
+
+            // 절대시간 기준점 설정(현재 tick 기준)
+            baseRealtimeMs = SystemClock.elapsedRealtime()
+            baseStartTick = currentTick
             
             // 현재 위치부터 재생
             while (eventIndex < allEvents.size && isPlaying) {
@@ -98,22 +104,20 @@ class MidiMultiPlayer(private val synth: SynthManager) {
                 if (seekTick != null) {
                     eventIndex = allEvents.indexOfFirst { it.tick >= seekTick }
                         .takeIf { it >= 0 } ?: allEvents.size
-                    lastTick = if (eventIndex > 0) {
-                        allEvents[eventIndex - 1].tick
-                    } else {
-                        seekTick
-                    }
                     currentTick = seekTick
                     currentEventIndex = eventIndex
                     seekToTick = null
+                    // seek 후 기준점 재설정 (오차 누적 방지)
+                    baseRealtimeMs = SystemClock.elapsedRealtime()
+                    baseStartTick = currentTick
                     // continue 대신 while 루프의 조건으로 처리
                     continue
                 }
                 
                 val event = allEvents[eventIndex]
-                val deltaTick = event.tick - lastTick
-                val msPerTick = 60000.0 / (bpm * 480)
-                val sleepTime = (deltaTick * msPerTick).toLong()
+                val msPerTick = 60000.0 / (bpm * ticksPerQuarter)
+                val targetTimeMs = baseRealtimeMs + ((event.tick - baseStartTick) * msPerTick).toLong()
+                var sleepTime = targetTimeMs - SystemClock.elapsedRealtime()
                 
                 // Thread.sleep 중에 interrupt를 받을 수 있도록 처리
                 if (sleepTime > 0) {
@@ -136,7 +140,6 @@ class MidiMultiPlayer(private val synth: SynthManager) {
                 // 재생 중단 확인
                 if (!isPlaying) break
                 
-                lastTick = event.tick
                 currentTick = event.tick
                 currentEventIndex = eventIndex
 
@@ -183,6 +186,11 @@ class MidiMultiPlayer(private val synth: SynthManager) {
     /** BPM 설정 */
     fun setBPM(newBPM: Double) {
         bpm = newBPM
+        // 재생 중 BPM 변경 시 기준점 재설정(절대시간 스케줄링 드리프트/점프 방지)
+        if (isPlaying) {
+            baseRealtimeMs = SystemClock.elapsedRealtime()
+            baseStartTick = currentTick
+        }
     }
 
     /** 특정 트랙 mute 설정 */
