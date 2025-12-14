@@ -7,11 +7,16 @@ import kotlin.concurrent.thread
 
 class MidiMultiPlayer(private val synth: SynthManager) {
 
+    data class TempoPoint(val tick: Long, val bpm: Double)
+
     private val allEvents = mutableListOf<MidiEvent>()
     private var playThread: Thread? = null
     private var isPlaying = false
+    // 사용자(또는 기본) BPM. tempo map이 있으면 scale 기준으로 사용됨.
     private var bpm = 120.0
     private var ticksPerQuarter: Int = 480 // MIDI PPQ (기본값)
+    private var baseTempoBpm: Double = 120.0 // tempo map의 기준 BPM(보통 tick 0)
+    private var tempoPoints: List<TempoPoint> = emptyList() // tick 오름차순
     private var muteTracks = mutableMapOf<Int, Boolean>() // 트랙별 mute 상태
     
     // 재생 위치 추적
@@ -25,6 +30,8 @@ class MidiMultiPlayer(private val synth: SynthManager) {
     private var baseRealtimeMs: Long = 0L
     @Volatile
     private var baseStartTick: Long = 0L
+    @Volatile
+    private var scheduleResetSeq: Long = 0L
     
     // Seek 기능을 위한 플래그
     @Volatile
@@ -43,6 +50,76 @@ class MidiMultiPlayer(private val synth: SynthManager) {
     /** MIDI PPQ(resolution) 설정. midiFile.resolution 값을 주입해야 정확한 타이밍이 나옵니다. */
     fun setTicksPerQuarter(ppq: Int) {
         ticksPerQuarter = ppq.coerceAtLeast(1)
+    }
+
+    /**
+     * MIDI tempo 이벤트(tempo map) 주입.
+     * - tick 기준 오름차순이어야 하며, tick 0이 없으면 자동으로 앞에 붙입니다.
+     */
+    fun setTempoPoints(points: List<TempoPoint>, baseBpmFallback: Double = 120.0) {
+        val sorted = points
+            .filter { it.tick >= 0 && it.bpm > 0.0 }
+            .sortedBy { it.tick }
+        val tick0 = sorted.firstOrNull { it.tick == 0L }
+        baseTempoBpm = tick0?.bpm ?: baseBpmFallback
+        tempoPoints = if (tick0 != null) {
+            sorted
+        } else {
+            listOf(TempoPoint(0L, baseTempoBpm)) + sorted
+        }
+    }
+
+    /** tick 구간(fromTick..toTick)의 기대 경과시간(ms)을 tempo map + 사용자 BPM(scale)로 계산 */
+    fun ticksToMs(fromTick: Long, toTick: Long): Long {
+        if (toTick <= fromTick) return 0L
+        val ppq = ticksPerQuarter.coerceAtLeast(1)
+        val scale = if (baseTempoBpm > 0.0) (bpm / baseTempoBpm) else 1.0
+
+        if (tempoPoints.isEmpty()) {
+            val msPerTick = 60000.0 / (bpm * ppq)
+            return ((toTick - fromTick) * msPerTick).toLong()
+        }
+
+        var ms = 0.0
+        var curTick = fromTick
+        var idx = tempoIndexAt(curTick)
+        while (curTick < toTick) {
+            val curTempoBpm = (tempoPoints.getOrNull(idx)?.bpm ?: baseTempoBpm) * scale
+            val nextTick = tempoPoints.getOrNull(idx + 1)?.tick ?: Long.MAX_VALUE
+            val endTick = minOf(toTick, nextTick)
+            val msPerTick = 60000.0 / (curTempoBpm * ppq)
+            ms += (endTick - curTick) * msPerTick
+            curTick = endTick
+            if (curTick >= nextTick) idx++
+        }
+        return ms.toLong()
+    }
+
+    /** 현재 tick에서 플레이어가 실제로 적용 중인 유효 BPM(tempo map + 사용자 BPM scale). */
+    fun getEffectiveBpmAtTick(tick: Long): Double {
+        val scale = if (baseTempoBpm > 0.0) (bpm / baseTempoBpm) else 1.0
+        if (tempoPoints.isEmpty()) return bpm
+        val idx = tempoIndexAt(tick)
+        val rawTempo = (tempoPoints.getOrNull(idx)?.bpm ?: baseTempoBpm)
+        return rawTempo * scale
+    }
+
+    fun getUserBpm(): Double = bpm
+
+    fun getBaseTempoBpm(): Double = baseTempoBpm
+
+    fun hasTempoMap(): Boolean = tempoPoints.isNotEmpty()
+
+    private fun tempoIndexAt(tick: Long): Int {
+        if (tempoPoints.isEmpty()) return -1
+        val i = tempoPoints.binarySearch { it.tick.compareTo(tick) }
+        return if (i >= 0) i else (-i - 2).coerceAtLeast(0)
+    }
+
+    private fun resetScheduleBase(startTick: Long) {
+        baseRealtimeMs = SystemClock.elapsedRealtime()
+        baseStartTick = startTick
+        scheduleResetSeq++
     }
 
     /** 트랙 이벤트 추가 (trackIndex 기준) */
@@ -94,10 +171,19 @@ class MidiMultiPlayer(private val synth: SynthManager) {
             }
 
             // 절대시간 기준점 설정(현재 tick 기준)
-            baseRealtimeMs = SystemClock.elapsedRealtime()
-            baseStartTick = currentTick
+            resetScheduleBase(currentTick)
             
             // 현재 위치부터 재생
+            var localResetSeq = scheduleResetSeq
+            var localBaseRealtimeMs = baseRealtimeMs
+            var localBaseStartTick = baseStartTick
+            var lastTickForSchedule = localBaseStartTick
+            var tickTimeOffsetMs = 0.0
+            var tempoIdx = tempoIndexAt(lastTickForSchedule)
+            var currentTempoBpm = if (tempoIdx >= 0) tempoPoints.getOrNull(tempoIdx)?.bpm ?: baseTempoBpm else baseTempoBpm
+            var nextTempoTick = if (tempoIdx >= 0) tempoPoints.getOrNull(tempoIdx + 1)?.tick ?: Long.MAX_VALUE else Long.MAX_VALUE
+            var scale = if (baseTempoBpm > 0.0) (bpm / baseTempoBpm) else 1.0
+
             while (eventIndex < allEvents.size && isPlaying) {
                 // Seek 중단 처리
                 val seekTick = seekToTick
@@ -108,15 +194,58 @@ class MidiMultiPlayer(private val synth: SynthManager) {
                     currentEventIndex = eventIndex
                     seekToTick = null
                     // seek 후 기준점 재설정 (오차 누적 방지)
-                    baseRealtimeMs = SystemClock.elapsedRealtime()
-                    baseStartTick = currentTick
+                    resetScheduleBase(currentTick)
+
+                    // local 스케줄 상태도 리셋
+                    localResetSeq = scheduleResetSeq
+                    localBaseRealtimeMs = baseRealtimeMs
+                    localBaseStartTick = baseStartTick
+                    lastTickForSchedule = localBaseStartTick
+                    tickTimeOffsetMs = 0.0
+                    tempoIdx = tempoIndexAt(lastTickForSchedule)
+                    currentTempoBpm = if (tempoIdx >= 0) tempoPoints.getOrNull(tempoIdx)?.bpm ?: baseTempoBpm else baseTempoBpm
+                    nextTempoTick = if (tempoIdx >= 0) tempoPoints.getOrNull(tempoIdx + 1)?.tick ?: Long.MAX_VALUE else Long.MAX_VALUE
+                    scale = if (baseTempoBpm > 0.0) (bpm / baseTempoBpm) else 1.0
                     // continue 대신 while 루프의 조건으로 처리
                     continue
                 }
                 
                 val event = allEvents[eventIndex]
-                val msPerTick = 60000.0 / (bpm * ticksPerQuarter)
-                val targetTimeMs = baseRealtimeMs + ((event.tick - baseStartTick) * msPerTick).toLong()
+                // BPM 변경(setBPM)으로 기준점이 바뀐 경우 local 상태 동기화
+                val curSeq = scheduleResetSeq
+                if (curSeq != localResetSeq) {
+                    localResetSeq = curSeq
+                    localBaseRealtimeMs = baseRealtimeMs
+                    localBaseStartTick = baseStartTick
+                    lastTickForSchedule = localBaseStartTick
+                    tickTimeOffsetMs = 0.0
+                    tempoIdx = tempoIndexAt(lastTickForSchedule)
+                    currentTempoBpm = if (tempoIdx >= 0) tempoPoints.getOrNull(tempoIdx)?.bpm ?: baseTempoBpm else baseTempoBpm
+                    nextTempoTick = if (tempoIdx >= 0) tempoPoints.getOrNull(tempoIdx + 1)?.tick ?: Long.MAX_VALUE else Long.MAX_VALUE
+                    scale = if (baseTempoBpm > 0.0) (bpm / baseTempoBpm) else 1.0
+                }
+
+                // tick -> time(누적) 적분: tempo map이 있으면 구간별로, 없으면 상수 bpm
+                if (tempoPoints.isEmpty()) {
+                    val msPerTick = 60000.0 / (bpm * ticksPerQuarter)
+                    tickTimeOffsetMs = ((event.tick - localBaseStartTick) * msPerTick)
+                    lastTickForSchedule = event.tick
+                } else {
+                    // 마지막 tick -> event.tick까지 누적 증가
+                    while (nextTempoTick <= event.tick) {
+                        val msPerTick = 60000.0 / ((currentTempoBpm * scale) * ticksPerQuarter)
+                        tickTimeOffsetMs += (nextTempoTick - lastTickForSchedule) * msPerTick
+                        lastTickForSchedule = nextTempoTick
+                        tempoIdx++
+                        currentTempoBpm = tempoPoints.getOrNull(tempoIdx)?.bpm ?: currentTempoBpm
+                        nextTempoTick = tempoPoints.getOrNull(tempoIdx + 1)?.tick ?: Long.MAX_VALUE
+                    }
+                    val msPerTick = 60000.0 / ((currentTempoBpm * scale) * ticksPerQuarter)
+                    tickTimeOffsetMs += (event.tick - lastTickForSchedule) * msPerTick
+                    lastTickForSchedule = event.tick
+                }
+
+                val targetTimeMs = localBaseRealtimeMs + tickTimeOffsetMs.toLong()
                 var sleepTime = targetTimeMs - SystemClock.elapsedRealtime()
                 
                 // Thread.sleep 중에 interrupt를 받을 수 있도록 처리
@@ -188,8 +317,7 @@ class MidiMultiPlayer(private val synth: SynthManager) {
         bpm = newBPM
         // 재생 중 BPM 변경 시 기준점 재설정(절대시간 스케줄링 드리프트/점프 방지)
         if (isPlaying) {
-            baseRealtimeMs = SystemClock.elapsedRealtime()
-            baseStartTick = currentTick
+            resetScheduleBase(currentTick)
         }
     }
 

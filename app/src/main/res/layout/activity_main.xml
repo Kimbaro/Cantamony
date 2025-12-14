@@ -31,6 +31,32 @@
                 android:textSize="16sp"
                 android:textColor="#ffffff" />
 
+            <!-- 트랙 빠른 토글(반주/멜로디): btnTrackList 클릭 시 표시 -->
+            <LinearLayout
+                android:id="@+id/trackQuickTogglesTop"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:visibility="gone"
+                android:layout_marginEnd="8dp"
+                android:gravity="center_vertical">
+
+                <Button
+                    android:id="@+id/btnMixToggleTop"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ON"
+                    android:textAllCaps="false"
+                    android:textColor="#ffffff"
+                    android:backgroundTint="#1db954"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:insetLeft="0dp"
+                    android:insetTop="0dp"
+                    android:insetRight="0dp"
+                    android:insetBottom="0dp" />
+            </LinearLayout>
+
             <!-- 트랙 목록 버튼 -->
             <Button
                 android:id="@+id/btnTrackList"
@@ -70,8 +96,9 @@
                 android:layout_margin="8dp"
                 android:background="#1a1a1a"
                 android:padding="4dp"
-                android:elevation="4dp">
-
+                android:elevation="4dp"
+                android:visibility="gone"
+                >
                 <Button
                     android:id="@+id/btnZoomIn"
                     android:layout_width="48dp"

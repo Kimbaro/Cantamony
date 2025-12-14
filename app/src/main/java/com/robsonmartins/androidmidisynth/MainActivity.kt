@@ -72,6 +72,13 @@ class MainActivity : AppCompatActivity() {
     private var playbackStartTick: Long = 0L
     private var currentPlaybackBpm: Double = 120.0
 
+    // === Track group toggles ===
+    // 사용자 규칙: trackIndex=1 은 반주, 그 외는 멜로디
+    private val accompanimentTrackIndex: Int = 1
+    // 단일 버튼: ON = 반주+멜로디, OFF = 반주만
+    private var mixAllEnabled: Boolean = true
+    private var trackControlsVisible: Boolean = false
+
     private data class MeasureTickRange(
         val index: Int,
         val measureNumber: String,
@@ -166,9 +173,74 @@ class MainActivity : AppCompatActivity() {
         
         // 확대/축소 버튼 설정
         setupZoomControls()
+
+        // 트랙 그룹 토글(반주/멜로디) UI 설정
+        setupTrackGroupToggles()
         
         // MIDI 로드 및 재생 준비
         loadAndPlayMidi()
+    }
+
+    private fun setupTrackGroupToggles() {
+        val btnTrackList = findViewById<Button>(R.id.btnTrackList)
+
+        val topContainer = findViewById<View>(R.id.trackQuickTogglesTop)
+        val sheetZoomRemote = findViewById<View>(R.id.sheetZoomRemote)
+
+        val btnMixTop = findViewById<Button>(R.id.btnMixToggleTop)
+
+        fun setContainersVisible(visible: Boolean) {
+            topContainer?.visibility = if (visible) View.VISIBLE else View.GONE
+            // sheetZoomRemote(줌 리모컨)는 초기에는 숨김, btnTrackList 선택 시에만 노출
+            sheetZoomRemote?.visibility = if (visible) View.VISIBLE else View.GONE
+        }
+
+        fun syncUiFromState() {
+            val txt = if (mixAllEnabled) "ON" else "OFF"
+            val color = if (mixAllEnabled) 0xFF1DB954.toInt() else 0xFF535353.toInt()
+            btnMixTop?.text = txt
+            btnMixTop?.setBackgroundColor(color)
+        }
+
+        val onToggle = View.OnClickListener {
+            mixAllEnabled = !mixAllEnabled
+            syncUiFromState()
+            applyTrackGroupMute()
+        }
+        btnMixTop?.setOnClickListener(onToggle)
+
+        btnTrackList?.setOnClickListener {
+            trackControlsVisible = !trackControlsVisible
+            setContainersVisible(trackControlsVisible)
+            syncUiFromState()
+        }
+
+        // 초기 상태
+        setContainersVisible(false)
+        syncUiFromState()
+    }
+
+    /**
+     * 사용자 규칙:
+     * - 반주: trackIndex=1
+     * - 멜로디: trackIndex!=1 전체
+     */
+    private fun applyTrackGroupMute() {
+        if (!::midiPlayer.isInitialized) return
+        val trackCount = midiFile?.trackCount ?: return
+        if (trackCount <= 0) return
+
+        // 반주(track 1): 항상 ON
+        if (accompanimentTrackIndex in 0 until trackCount) {
+            midiPlayer.setMute(accompanimentTrackIndex, mute = false)
+        }
+
+        // 멜로디(track 1 제외 전부): mixAllEnabled=false 이면 모두 mute
+        val muteMelody = !mixAllEnabled
+        for (i in 0 until trackCount) {
+            if (i == accompanimentTrackIndex) continue
+            midiPlayer.setMute(i, mute = muteMelody)
+        }
     }
     
     /**
@@ -373,7 +445,21 @@ class MainActivity : AppCompatActivity() {
                 
                 // 3. 템포 추출
                 val tempoChanges = extractTempoChanges(midiFile!!)
-                val initialBPM = tempoChanges.firstOrNull()?.bpm ?: 120.0
+                val initialBPM = tempoChanges.firstOrNull { it.tick == 0L }?.bpm ?: 120.0
+                run {
+                    val count = tempoChanges.size
+                    val hasTick0 = tempoChanges.any { it.tick == 0L }
+                    val distinctCount = tempoChanges
+                        .map { it.tick to it.bpm }
+                        .distinct()
+                        .size
+                    val hasNonZeroTick = tempoChanges.any { it.tick > 0L }
+                    val sample = tempoChanges.take(5).joinToString { "(${it.tick},${it.bpm})" }
+                    Log.d(
+                        "TempoMap",
+                        "tempoChanges count=$count distinct=$distinctCount hasTick0=$hasTick0 hasNonZeroTick=$hasNonZeroTick sample=$sample"
+                    )
+                }
                 Log.d("MainActivity", "Initial BPM: $initialBPM")
                 
                 // 4. MidiEvent로 변환
@@ -387,6 +473,11 @@ class MainActivity : AppCompatActivity() {
                 midiPlayer = MidiMultiPlayer(synthManager)
                 // PPQ(resolution) 주입: 480 하드코딩 제거
                 midiPlayer.setTicksPerQuarter(midiFile?.resolution ?: 480)
+                // Tempo map 주입: 파일 템포 변화 + 사용자 BPM(scale) 기반 스케줄링/SyncCheck에 사용
+                midiPlayer.setTempoPoints(
+                    tempoChanges.map { MidiMultiPlayer.TempoPoint(it.tick, it.bpm) },
+                    baseBpmFallback = 120.0
+                )
                 
                 // 6. 트랙 추가
                 trackEventsMap.forEach { (trackIndex, events) ->
@@ -397,6 +488,9 @@ class MainActivity : AppCompatActivity() {
                 // 7. BPM 설정
                 midiPlayer.setBPM(initialBPM)
                 currentPlaybackBpm = initialBPM
+
+                // 7.1 트랙 그룹 mute 상태 반영(토글이 열려있든 아니든 현재 상태 적용)
+                applyTrackGroupMute()
                 
                 // 8. 재생 버튼 연동
                 setupPlaybackControls()
@@ -563,6 +657,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<SeekBar>(R.id.seekBarMeasure)?.apply {
             max = (measureTickRanges.size - 1).coerceAtLeast(0)
         }
+
+        // 초기 화면 표기: 재생 전에도 "현재/전체"가 보이도록
+        val total = measureTickRanges.size
+        findViewById<TextView>(R.id.txtMeasure)?.text =
+            if (total > 0) "마디: 1 / $total" else "마디: 0 / 0"
     }
 
     private fun startPlaybackTracking() {
@@ -588,8 +687,9 @@ class MainActivity : AppCompatActivity() {
                         currentMeasureIndex = idx
 
                         // UI
+                        val displayIndex = idx + 1
                         findViewById<TextView>(R.id.txtMeasure)?.text =
-                            "마디: ${measureTickRanges[idx].measureNumber} / ${measureTickRanges.size}"
+                            "마디: $displayIndex / ${measureTickRanges.size}"
                         findViewById<SeekBar>(R.id.seekBarMeasure)?.progress = idx
 
                         // WebView(OSMD) 하이라이트 (B안 핵심)
@@ -600,11 +700,19 @@ class MainActivity : AppCompatActivity() {
                         val elapsedMs = SystemClock.elapsedRealtime() - startMs
                         val ppq = (midiFile?.resolution ?: 480).coerceAtLeast(1)
                         // 현재 플레이어는 bpm을 고정 사용(템포 변경 미반영). 따라서 "플레이어 기준 expected"로 드리프트를 확인
-                        val expectedMs = (((tick - playbackStartTick).toDouble()) * (60000.0 / (currentPlaybackBpm * ppq))).toLong()
+                        val expectedMs = if (::midiPlayer.isInitialized) {
+                            midiPlayer.ticksToMs(playbackStartTick, tick)
+                        } else {
+                            (((tick - playbackStartTick).toDouble()) * (60000.0 / (currentPlaybackBpm * ppq))).toLong()
+                        }
                         val driftMs = elapsedMs - expectedMs
+                        val playerBpmAtTick = if (::midiPlayer.isInitialized) midiPlayer.getEffectiveBpmAtTick(tick) else currentPlaybackBpm
                         Log.d(
                             "SyncCheck",
-                            "measureIndex=$idx measureNo=${measureTickRanges[idx].measureNumber} tick=$tick bpm=$currentPlaybackBpm ppq=$ppq elapsedMs=$elapsedMs expectedMs=$expectedMs driftMs=$driftMs"
+                            "measureIndex=$idx measureNo=${measureTickRanges[idx].measureNumber} tick=$tick " +
+                                "uiBpm=$currentPlaybackBpm playerBpm=$playerBpmAtTick baseTempoBpm=${if (::midiPlayer.isInitialized) midiPlayer.getBaseTempoBpm() else -1.0} " +
+                                "hasTempoMap=${if (::midiPlayer.isInitialized) midiPlayer.hasTempoMap() else false} " +
+                                "ppq=$ppq elapsedMs=$elapsedMs expectedMs=$expectedMs driftMs=$driftMs"
                         )
                     }
                     playbackHandler?.postDelayed(this, 50)
@@ -651,6 +759,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<SeekBar>(R.id.seekBarMeasure)?.apply {
             max = (measureTickRanges.size - 1).coerceAtLeast(0)
         }
+
+        // 초기 화면 표기: 재생 전에도 "현재/전체"가 보이도록
+        val total = measureTickRanges.size
+        findViewById<TextView>(R.id.txtMeasure)?.text =
+            if (total > 0) "마디: 1 / $total" else "마디: 0 / 0"
     }
 
     private fun highlightMeasureIndexInWebView(index: Int) {
@@ -719,7 +832,7 @@ class MainActivity : AppCompatActivity() {
                 midiPlayer.seekTo(target.startTick)
                 highlightMeasureIndexInWebView(target.index)
                 findViewById<TextView>(R.id.txtMeasure)?.text =
-                    "마디: ${target.measureNumber} / ${measureTickRanges.size}"
+                    "마디: ${progress + 1} / ${measureTickRanges.size}"
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
