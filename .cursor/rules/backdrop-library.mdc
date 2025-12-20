@@ -1,0 +1,207 @@
+# Backdrop 라이브러리 가이드
+
+`io.github.kyant0:backdrop` 라이브러리 사용 시 참고할 수 있는 Backdrop 타입 및 사용법입니다.
+
+## Backdrop 타입
+
+### Backdrop
+- **함수**: `rememberBackdrop`
+- **설명**: 커스텀 명령으로 backdrop을 그릴 수 있습니다.
+- **용도**: 커스텀 backdrop 그리기
+
+### Layer Backdrop
+- **함수**: `rememberLayerBackdrop`
+- **설명**: `Modifier.layerBackdrop`과 함께 사용하여 Composable의 콘텐츠를 그리거나, `drawBackdrop` modifier의 `exportedBackdrop` 파라미터로 파생됩니다.
+- **특징**: 좌표 의존적(coordinates-dependent)
+- **용도**: Composable 콘텐츠를 backdrop으로 캡처
+
+### Combined Backdrop
+- **함수**: `rememberCombinedBackdrop`
+- **설명**: 여러 backdrop을 하나의 backdrop으로 병합할 수 있습니다.
+- **용도**: 탭, 슬라이더 같은 컴포넌트 생성에 유용
+
+### Canvas Backdrop
+- **함수**: `rememberCanvasBackdrop`
+- **설명**: 빈 backdrop에 커스텀 콘텐츠를 그릴 수 있습니다.
+- **특징**: 좌표 독립적(coordinates-independent)
+- **용도**: 커스텀 콘텐츠를 backdrop으로 그리기
+
+### Empty Backdrop
+- **함수**: `emptyBackdrop`
+- **설명**: 아무것도 그리지 않습니다.
+- **용도**: 빈 backdrop이 필요한 경우
+
+## 사용 예시
+
+### Layer Backdrop 사용
+```kotlin
+@Composable
+fun Example() {
+    val backdrop = rememberLayerBackdrop()
+    
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .layerBackdrop(backdrop) // 배경을 backdrop으로 캡처
+    ) {
+        // 배경 콘텐츠
+    }
+    
+    // 글래스 효과 적용
+    Box(
+        modifier = Modifier
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { ContinuousRoundedRectangle(32.dp) },
+                effects = {
+                    blur(16.dp.toPx())
+                    vibrancy()
+                    lens(16.dp.toPx(), 172.dp.toPx(), depthEffect = true)
+                }
+            )
+    ) {
+        // 글래스 효과가 적용된 콘텐츠
+    }
+}
+```
+
+### Canvas Backdrop 사용
+```kotlin
+@Composable
+fun Example() {
+    val backdrop = rememberCanvasBackdrop {
+        // 커스텀 그리기
+        drawRect(Color.White)
+    }
+    
+    Box(
+        modifier = Modifier
+            .drawBackdrop(
+                backdrop = backdrop,
+                effects = {
+                    blur(8.dp.toPx())
+                }
+            )
+    ) {
+        // 콘텐츠
+    }
+}
+```
+
+## 주의사항
+
+1. **Layer Backdrop**: `Modifier.layerBackdrop`을 적용한 Composable의 콘텐츠를 캡처합니다. 배경이 먼저 그려져야 합니다.
+
+2. **좌표 의존성**: Layer Backdrop은 좌표 의존적이므로, 위치가 변경되면 backdrop도 업데이트됩니다.
+
+3. **Canvas Backdrop**: 좌표 독립적이므로, 위치와 관계없이 동일한 콘텐츠를 그립니다.
+
+4. **Effects 블록**: `BackdropEffectScope`는 `Density`를 상속받으므로, `effects` 블록 내에서 직접 `dp.toPx()`를 사용할 수 있습니다.
+
+## 중요: Layer Backdrop이 캡처하는 것
+
+### ❌ 잘못된 방법: drawBehind 사용
+`drawBehind`으로 그린 내용은 `layerBackdrop`이 캡처하지 못합니다. `layerBackdrop`은 Composable 콘텐츠만 캡처합니다.
+
+```kotlin
+// ❌ 잘못된 예시 - drawBehind은 layerBackdrop이 캡처하지 못함
+Box(
+    modifier = Modifier
+        .fillMaxSize()
+        .drawBehind {
+            // 이 내용은 layerBackdrop이 캡처하지 못함
+            drawRect(Color.White)
+        }
+        .layerBackdrop(backdrop)
+)
+```
+
+### ✅ 올바른 방법: Canvas Composable 사용
+배경을 `layerBackdrop`으로 캡처하려면 `Canvas` Composable을 사용해야 합니다.
+
+```kotlin
+// ✅ 올바른 예시 - Canvas Composable 사용
+Box(
+    modifier = Modifier
+        .fillMaxSize()
+        .layerBackdrop(backdrop) // layerBackdrop을 먼저 적용
+) {
+    // Canvas Composable을 사용하여 배경 그리기 (layerBackdrop이 캡처 가능)
+    Canvas(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // 배경 그리기
+        drawRect(Color.White)
+    }
+}
+```
+
+## 중요: drawBackdrop의 effects 블록에서 상태 추적
+
+### 상태 변수를 직접 읽어야 함
+`drawBackdrop`의 `effects` 블록에서 상태 변수를 직접 읽어야 `observeReads`가 상태 변경을 추적합니다.
+
+```kotlin
+@Composable
+fun GlassEffectExample() {
+    var blurRadius by remember { mutableFloatStateOf(16f) }
+    var refractionHeight by remember { mutableFloatStateOf(0.2f) }
+    
+    val backdrop = rememberLayerBackdrop()
+    
+    Box(
+        modifier = Modifier
+            .drawBackdrop(
+                backdrop = backdrop,
+                effects = {
+                    // ✅ 올바른 방법: 상태 변수를 직접 읽음
+                    vibrancy()
+                    blur(blurRadius.dp.toPx()) // 상태 변수 직접 읽기
+                    lens(
+                        refractionHeight = refractionHeight * size.minDimension * 0.5f, // 상태 변수 직접 읽기
+                        refractionAmount = 0.2f * size.minDimension,
+                        depthEffect = true
+                    )
+                }
+            )
+    ) {
+        // 슬라이더로 상태 변경 시 effects 블록이 자동으로 업데이트됨
+        Slider(
+            value = blurRadius,
+            onValueChange = { blurRadius = it }
+        )
+    }
+}
+```
+
+### 샘플 코드 참고
+`GlassPlaygroundContent.kt`와 동일한 구조로 작성해야 합니다:
+- 상태 변수를 `effects` 블록에서 직접 읽기
+- `vibrancy()` → `blur()` → `lens()` 순서 유지
+- `lens`는 `minDimension`을 사용하여 비례 계산
+
+```kotlin
+effects = {
+    val minDimension = size.minDimension
+    vibrancy()
+    blur(blurRadiusDp.dp.toPx())
+    lens(
+        refractionHeight = refractionHeightFrac * minDimension * 0.5f,
+        refractionAmount = refractionAmountFrac * minDimension,
+        depthEffect = true,
+        chromaticAberration = chromaticAberration > 0f
+    )
+}
+```
+
+## 문제 해결 체크리스트
+
+1. **슬라이더로 효과가 제어되지 않는 경우**:
+   - ✅ `effects` 블록에서 상태 변수를 직접 읽고 있는가?
+   - ✅ `layerBackdrop`이 배경을 제대로 캡처하고 있는가? (`drawBehind` 대신 `Canvas` 사용)
+   - ✅ 샘플 코드(`GlassPlaygroundContent.kt`)와 동일한 구조인가?
+
+2. **렌즈 효과가 보이지 않는 경우**:
+   - ✅ 배경에 `layerBackdrop`이 적용되어 있는가?
+   - ✅ 배경이 Composable 콘텐츠인가? (`drawBehind`이 아닌 `Canvas` 등)
+   - ✅ `lens` 효과가 올바른 파라미터로 설정되어 있는가?

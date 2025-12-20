@@ -1,58 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/splashRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@android:color/transparent">
 
-    <!-- 배경 이미지 -->
-    <ImageView
-        android:id="@+id/splashBackground"
+    <!-- 오프닝 비디오 배경 (TextureView: 센터크롭/줌으로 꽉 채우기 지원) -->
+    <TextureView
+        android:id="@+id/splashVideoTexture"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerCrop"
-        android:contentDescription="배경" />
+        android:clickable="false"
+        android:focusable="false" />
 
-    <!-- 블러 오버레이 (점진적 블러 효과) -->
+    <!-- 배경 단색 (RGB 227, 227, 227) -->
     <View
-        android:id="@+id/blurOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#80000000" />
+        android:background="@color/background_gray"
+        android:clickable="false"
+        android:focusable="false" />
 
-    <!-- 로고와 로딩바 컨테이너 -->
-    <LinearLayout
+    <!-- 아래로 스와이프해서 시작 (ComposeView with Backdrop effects) - splashRoot 전체를 채우도록 -->
+    <androidx.compose.ui.platform.ComposeView
+        android:id="@+id/scrollHintComposeView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:padding="32dp">
-
-        <!-- 회사 로고 -->
-        <ImageView
-            android:id="@+id/splashLogo"
-            android:layout_width="200dp"
-            android:layout_height="200dp"
-            android:scaleType="fitCenter"
-            android:contentDescription="로고"
-            android:layout_marginBottom="48dp" />
-
-        <!-- 게이지 바 -->
-        <com.robsonmartins.androidmidisynth.CircularGaugeView
-            android:id="@+id/splashLoadingBar"
-            android:layout_width="120dp"
-            android:layout_height="120dp"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 로딩 메시지 -->
-        <TextView
-            android:id="@+id/splashLoadingText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="학습 앨범을 준비하고 있어요!"
-            android:textSize="14sp"
-            android:textColor="#b3b3b3"
-            android:alpha="1.0" />
-    </LinearLayout>
+        android:alpha="0"
+        android:visibility="gone" />
 
 </FrameLayout>
 

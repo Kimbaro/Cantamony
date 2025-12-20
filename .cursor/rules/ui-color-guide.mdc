@@ -1,0 +1,80 @@
+# UI 색상 규칙
+
+UI 생성 시 반드시 다음 텍스트 색상 가이드를 준수하세요.
+
+## 텍스트 색상 시스템
+
+### Primary Text
+- **색상 코드**: `#222222`
+- **용도**: 가장 중요한 제목, 숫자
+- **사용 예시**: 
+  - 메인 화면 제목
+  - 중요한 통계나 숫자 표시
+  - 주요 섹션 헤더
+
+### Secondary Text
+- **색상 코드**: `#444444`
+- **용도**: 일반 설명, 부제목
+- **사용 예시**:
+  - 본문 텍스트
+  - 서브헤더
+  - 설명 문구
+  - 보조 정보
+
+### Accent Text
+- **색상 코드**: `#1A1E23`
+- **용도**: 링크, 강조할 정보 (네이비 톤)
+- **사용 예시**:
+  - 클릭 가능한 링크
+  - 강조가 필요한 정보
+  - CTA(행동 유도) 버튼 텍스트
+  - 중요한 알림 메시지
+
+## 필수 준수 사항
+
+UI를 생성하거나 수정할 때 다음 규칙을 반드시 적용하세요:
+
+1. **가장 중요한 제목이나 숫자** → `#222222` (Primary Text) 사용
+2. **일반 설명이나 부제목** → `#444444` (Secondary Text) 사용
+3. **링크나 강조할 정보** → `#1A1E23` (Accent Text, 네이비 톤) 사용
+
+텍스트의 중요도와 역할에 따라 적절한 색상을 선택하여 사용하세요.
+
+## Android 구현 방법
+
+### XML 리소스 (colors.xml)
+```xml
+<color name="primary_text">#222222</color>
+<color name="secondary_text">#444444</color>
+<color name="accent_text">#1A1E23</color>
+```
+
+### XML 레이아웃에서 사용
+```xml
+<!-- Primary Text -->
+<TextView
+    android:textColor="@color/primary_text"
+    ... />
+
+<!-- Secondary Text -->
+<TextView
+    android:textColor="@color/secondary_text"
+    ... />
+
+<!-- Accent Text -->
+<TextView
+    android:textColor="@color/accent_text"
+    ... />
+```
+
+### Kotlin 코드에서 사용
+```kotlin
+// Primary Text
+textView.setTextColor(ContextCompat.getColor(context, R.color.primary_text))
+
+// Secondary Text
+textView.setTextColor(ContextCompat.getColor(context, R.color.secondary_text))
+
+// Accent Text
+textView.setTextColor(ContextCompat.getColor(context, R.color.accent_text))
+```
